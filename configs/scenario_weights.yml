@@ -1,0 +1,4 @@
+weights:
+  Base: 0.6
+  Upside: 0.2
+  Downside: 0.2
