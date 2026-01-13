@@ -36,10 +36,13 @@ def load_latest_outputs():
     mig_path = "data/curated/stage_migration.parquet"
     mig = pd.read_parquet(mig_path) if glob.glob(mig_path) else None
 
-    return asof, ecl, ecl_ov, scen, drv, qc, mig
+    audit_path = "data/curated/overlay_audit.parquet"
+    audit = pd.read_parquet(audit_path) if glob.glob(audit_path) else None
+
+    return asof, ecl, ecl_ov, scen, drv, qc, mig, audit
 
 
-asof, ecl, ecl_ov, scen, drv, qc, mig = load_latest_outputs()
+asof, ecl, ecl_ov, scen, drv, qc, mig, audit = load_latest_outputs()
 
 st.subheader(f"ASOF: {asof}")
 
@@ -226,6 +229,78 @@ st.markdown(
     "Any 1/2→3 = defaults. "
     "This is a standard governance monitoring view for staging stability."
 )
+
+st.divider()
+
+st.markdown("## Stage Migration Trend (Governance Monitoring)")
+
+if mig is None:
+    st.info("Migration table not found. Run: python src/ecl_engine/stage_migration.py")
+else:
+    m = mig.copy()
+    m["from_date"] = pd.to_datetime(m["from_date"])
+    m["to_date"] = pd.to_datetime(m["to_date"])
+
+    # apply segment filter
+    m = m[m["segment"].isin(sel_segments)].copy()
+
+    # aggregate counts by month + transition
+    agg = (
+        m.groupby(["to_date", "stage_from", "stage_to"], as_index=False)["n_accounts"]
+        .sum()
+        .sort_values("to_date")
+    )
+
+    # total accounts "from" each month (denominator)
+    denom = (
+        agg.groupby(["to_date", "stage_from"], as_index=False)["n_accounts"]
+        .sum()
+        .rename(columns={"n_accounts": "from_total"})
+    )
+
+    agg = agg.merge(denom, on=["to_date", "stage_from"], how="left")
+    agg["pct_of_from_stage"] = 100.0 * agg["n_accounts"] / agg["from_total"].replace(0, 1)
+
+    # build key transition series
+    def series(stage_from: int, stage_to: int, label: str) -> pd.DataFrame:
+        x = agg[
+            (agg["stage_from"] == stage_from) & (agg["stage_to"] == stage_to)
+        ][["to_date", "pct_of_from_stage"]].copy()
+        x = x.rename(columns={"pct_of_from_stage": label})
+        return x
+
+    s12 = series(1, 2, "1→2 (SICR)")
+    s21 = series(2, 1, "2→1 (Cure)")
+    s13 = series(1, 3, "1→3 (Default)")
+    s23 = series(2, 3, "2→3 (Default)")
+
+    # merge on to_date
+    trend = None
+    for s in [s12, s21, s13, s23]:
+        trend = s if trend is None else trend.merge(s, on="to_date", how="outer")
+
+    trend = trend.fillna(0.0).sort_values("to_date").set_index("to_date")
+    st.line_chart(trend)
+    st.caption("Percentages are conditional on the 'from stage' population each month.")
+
+st.divider()
+
+st.markdown("## Overlay Audit (Governance Evidence)")
+
+if audit is None:
+    st.info("Overlay audit not found. Run: python -m ecl_engine.overlay_audit")
+else:
+    st.markdown("### Overlay register (rules + allocated impact)")
+    st.dataframe(audit, use_container_width=True)
+
+    oid = st.selectbox("Select overlay_id to view impacted accounts", audit["overlay_id"].tolist())
+    top_path = f"data/curated/overlay_top_accounts_{oid}.parquet"
+    if glob.glob(top_path):
+        top = pd.read_parquet(top_path)
+        st.markdown("### Top accounts impacted by overlay allocation")
+        st.dataframe(top, use_container_width=True, height=360)
+    else:
+        st.warning("Top accounts file not found for this overlay.")
 
 st.divider()
 
