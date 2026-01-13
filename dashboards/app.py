@@ -3,6 +3,7 @@ from __future__ import annotations
 import glob
 
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 
@@ -32,10 +33,13 @@ def load_latest_outputs():
     drv = pd.read_csv(drv_path) if glob.glob(drv_path) else None
     qc = pd.read_parquet(qc_path) if glob.glob(qc_path) else None
 
-    return asof, ecl, ecl_ov, scen, drv, qc
+    mig_path = "data/curated/stage_migration.parquet"
+    mig = pd.read_parquet(mig_path) if glob.glob(mig_path) else None
+
+    return asof, ecl, ecl_ov, scen, drv, qc, mig
 
 
-asof, ecl, ecl_ov, scen, drv, qc = load_latest_outputs()
+asof, ecl, ecl_ov, scen, drv, qc, mig = load_latest_outputs()
 
 st.subheader(f"ASOF: {asof}")
 
@@ -55,6 +59,53 @@ col1.metric("Reported ECL (post-overlay)", f"{f['ecl_post_overlay'].sum():,.2f}"
 col2.metric("Overlay impact", f"{f['overlay_amount'].sum():,.2f}")
 col3.metric("Pre-overlay ECL", f"{f['ecl_pre_overlay'].sum():,.2f}")
 col4.metric("Accounts in view", f"{f.shape[0]:,}")
+
+st.divider()
+
+st.markdown("## ECL Waterfall (Governance)")
+
+pre = float(f["ecl_pre_overlay"].sum())
+ov = float(f["overlay_amount"].sum())
+post = float(f["ecl_post_overlay"].sum())
+
+wf1, wf2 = st.columns(2)
+
+with wf1:
+    st.markdown("### Overall waterfall")
+    fig = go.Figure(
+        go.Waterfall(
+            orientation="v",
+            measure=["absolute", "relative", "total"],
+            x=["Pre-overlay", "Overlay", "Post-overlay"],
+            y=[pre, ov, post],
+        )
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+with wf2:
+    st.markdown("### Segment waterfall")
+    seg_choice = st.selectbox("Pick a segment", sorted(f["segment"].unique()))
+    sf = f[f["segment"] == seg_choice]
+    pre_s = float(sf["ecl_pre_overlay"].sum())
+    ov_s = float(sf["overlay_amount"].sum())
+    post_s = float(sf["ecl_post_overlay"].sum())
+
+    fig2 = go.Figure(
+        go.Waterfall(
+            orientation="v",
+            measure=["absolute", "relative", "total"],
+            x=["Pre-overlay", "Overlay", "Post-overlay"],
+            y=[pre_s, ov_s, post_s],
+        )
+    )
+    st.plotly_chart(fig2, use_container_width=True)
+
+st.markdown(
+    "Pre-overlay is the model output. "
+    "Overlay is management judgement. "
+    "Post-overlay is the reported number. "
+    "This is the cleanest “audit trail” view."
+)
 
 st.divider()
 
@@ -120,6 +171,61 @@ else:
     # pivot for chart
     pivot = qc_total.pivot(index="snapshot_date", columns="stage", values="n_accounts").fillna(0).sort_index()
     st.line_chart(pivot)
+
+st.divider()
+
+st.markdown("## Stage Migration Matrix (t-1 → t)")
+
+if mig is None:
+    st.info("Migration table not found. Run: python src/ecl_engine/stage_migration.py")
+else:
+    mig["from_date"] = pd.to_datetime(mig["from_date"])
+    mig["to_date"] = pd.to_datetime(mig["to_date"])
+
+    # pick a month to view (use 'to_date')
+    dates = sorted(mig["to_date"].unique())
+    to_dt = st.selectbox("Select month (to_date)", dates, index=len(dates) - 1)
+
+    view = mig[(mig["to_date"] == to_dt) & (mig["segment"].isin(sel_segments))].copy()
+
+    # aggregate across selected segments
+    agg = view.groupby(["stage_from", "stage_to"], as_index=False)["n_accounts"].sum()
+
+    pivot = agg.pivot(index="stage_from", columns="stage_to", values="n_accounts").fillna(0.0)
+    pivot = pivot.reindex(index=[1, 2, 3], columns=[1, 2, 3], fill_value=0.0)
+
+    mode = st.radio("Display", ["Counts", "Row % (conditional on from_stage)"], horizontal=True)
+
+    show = pivot.copy()
+    if mode.startswith("Row %"):
+        show = show.div(show.sum(axis=1).replace(0, 1), axis=0) * 100.0
+
+    c1, c2 = st.columns([1, 1.2])
+
+    with c1:
+        st.markdown("### Matrix table")
+        st.dataframe(show.round(2), use_container_width=True)
+
+    with c2:
+        st.markdown("### Heatmap")
+        fig = go.Figure(
+            data=go.Heatmap(
+                z=show.values,
+                x=[str(c) for c in show.columns],
+                y=[str(i) for i in show.index],
+                hoverongaps=False,
+            )
+        )
+        fig.update_layout(xaxis_title="Stage to", yaxis_title="Stage from")
+        st.plotly_chart(fig, use_container_width=True)
+
+st.markdown(
+    "Rows = stage last month (t-1), columns = stage this month (t). "
+    "Diagonal = stable accounts. "
+    "1→2 = SICR migration, 2→1 = cure (improvement). "
+    "Any 1/2→3 = defaults. "
+    "This is a standard governance monitoring view for staging stability."
+)
 
 st.divider()
 
