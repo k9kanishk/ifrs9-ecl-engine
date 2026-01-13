@@ -5,13 +5,13 @@ default:
 
   # Simple PIT adjustment: logit(PD_PIT)=logit(PD_TTC)+intercept+betas*(macro_z)
   pd_logit:
-    intercept: -0.20
-    unemployment_z: 0.35
-    gdp_yoy_z: -0.25
-    policy_rate_z: 0.20
+    intercept: -0.25
+    unemployment_z: 0.25
+    gdp_yoy_z: -0.18
+    policy_rate_z: 0.12
 
   pd_floor: 0.0001
-  pd_cap: 0.35
+  pd_cap: 0.20
 
 sicr_pd_ratio_threshold:
   Retail_Mortgage: 2.0
