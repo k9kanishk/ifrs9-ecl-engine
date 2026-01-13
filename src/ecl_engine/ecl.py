@@ -24,7 +24,28 @@ def load_yml(path: str | Path) -> dict:
 
 def month_end_index(start_me: pd.Timestamp, periods: int) -> pd.DatetimeIndex:
     # future month-ends starting next month-end
-    return pd.date_range(start=start_me + pd.offsets.MonthEnd(1), periods=periods, freq="M")
+    return pd.date_range(start=start_me + pd.offsets.MonthEnd(1), periods=periods, freq="ME")
+
+
+def macro_block_ffill(mz: pd.DataFrame, scen: str, dates: pd.DatetimeIndex) -> np.ndarray:
+    """
+    mz: MultiIndex (scenario, date) -> columns unemployment_z, gdp_yoy_z, policy_rate_z
+    dates: desired future dates (month-ends)
+    Returns (H,3) macro z block, forward-filled beyond last known macro date.
+    """
+    dates = pd.to_datetime(dates)
+
+    # Extract one scenario with date index
+    df = mz.xs(scen, level=0).sort_index()
+
+    # Extend index to include required dates, then forward fill
+    idx = df.index.union(dates)
+    df2 = df.reindex(idx).sort_index().ffill()
+
+    # If dates are earlier than the first macro date (unlikely), backfill them
+    df2 = df2.bfill()
+
+    return df2.loc[dates, ["unemployment_z", "gdp_yoy_z", "policy_rate_z"]].to_numpy(dtype=np.float32)
 
 
 def prepare_macro_z_all_scenarios(macro: pd.DataFrame) -> pd.DataFrame:
@@ -140,9 +161,7 @@ def compute_ecl_asof(
     }
 
     for scen in ["Base", "Upside", "Downside"]:
-        m = mz.loc[(scen, future_dates), ["unemployment_z", "gdp_yoy_z", "policy_rate_z"]].to_numpy(
-            dtype=np.float32
-        )  # (H,3)
+        m = macro_block_ffill(mz, scen, future_dates)  # (H,3)
 
         x = (
             float(betas["intercept"])
