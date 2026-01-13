@@ -216,7 +216,7 @@ def compute_ecl_asof(
     # Simple Stage 3 override (optional): defaulted exposure -> immediate loss proxy
     # Keeps things sensible for a skeleton engine.
     stage3 = out["stage"].to_numpy() == 3
-    out.loc[stage3, "ecl_selected"] = (out.loc[stage3, "balance"] * 0.9).to_numpy()  # conservative proxy
+    out.loc[stage3, "ecl_selected"] = (out.loc[stage3, "balance"].astype("float64") * 0.9).to_numpy()  # conservative proxy
 
     out["asof_date"] = asof
     return out

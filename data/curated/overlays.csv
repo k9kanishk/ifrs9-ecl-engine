@@ -1,0 +1,3 @@
+overlay_id,asof_date,segment,method,value,reason_code,owner,approved_by
+OVR_001,2024-12-31,SME_TermLoan,multiplicative,1.05,EmergingRisk_SME,ModelRisk,HeadOfCreditRisk
+OVR_002,2024-12-31,Retail_PL,additive,250000,DataQuality_PL,Finance,IFRS9Committee
