@@ -208,10 +208,18 @@ def compute_ecl_asof(
     )
 
     out = pd.DataFrame(results)
+    # Ensure float64 for stable downstream assignments / reports
+    for c in out.columns:
+        if c.startswith("ecl"):
+            out[c] = out[c].astype("float64")
 
     # Stage-selected ECL
     # Stage1 -> 12m, Stage2/3 -> lifetime
-    out["ecl_selected"] = np.where(out["stage"].to_numpy() == 1, out["ecl12_weighted"], out["ecllt_weighted"])
+    out["ecl_selected"] = np.where(
+        out["stage"].to_numpy() == 1,
+        out["ecl12_weighted"].to_numpy(),
+        out["ecllt_weighted"].to_numpy(),
+    ).astype("float64")
 
     # Simple Stage 3 override (optional): defaulted exposure -> immediate loss proxy
     # Keeps things sensible for a skeleton engine.

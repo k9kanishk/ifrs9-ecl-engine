@@ -122,16 +122,6 @@ def run_decomposition(
         }
     ).fillna(0.0)
 
-    decomp["unexplained_residual"] = (
-        decomp["ecl_reported"]
-        - (
-            decomp["ecl_reported"]
-            - decomp["pd_scenario_component"]
-            - decomp["lgd_downturn_component"]
-            - decomp["ead_ccf_component"]
-        )
-    )
-
     decomp = decomp.sort_values("ecl_reported", ascending=False)
 
     outdir = Path(outdir)
