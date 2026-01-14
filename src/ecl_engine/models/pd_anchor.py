@@ -52,8 +52,8 @@ def compute_anchor_shift(
     policy_path: str = "configs/policy.yml",
     outdir: str = "data/curated",
     iters: int = 30,
-    lo: float = -10.0,
-    hi: float = 10.0,
+    lo: float = -20.0,
+    hi: float = 20.0,
 ) -> Path:
     acc = pd.read_parquet(accounts_path)
     policy = load_yml(policy_path)
@@ -118,6 +118,14 @@ def compute_anchor_shift(
         high = np.where(cum_mid >= target, mid, high)
 
     shift = 0.5 * (low + high)
+    hit_hi = np.mean(np.isclose(shift, hi, atol=1e-6))
+    hit_lo = np.mean(np.isclose(shift, lo, atol=1e-6))
+    if hit_hi > 0.01 or hit_lo > 0.01:
+        print(
+            "WARNING: anchor shifts saturated. "
+            f"hit_hi={hit_hi:.2%}, hit_lo={hit_lo:.2%}. "
+            "Increase pd_cap / widen bounds / check pd_hat realism."
+        )
 
     out = pd.DataFrame(
         {
