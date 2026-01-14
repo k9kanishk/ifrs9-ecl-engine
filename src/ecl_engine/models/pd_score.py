@@ -23,6 +23,7 @@ def score_asof(
     schema = json.loads(Path(schema_path).read_text())
     cat_cols = schema["cat_cols"]
     num_cols = schema["num_cols"]
+    citl_delta = float(schema.get("citl_delta", 0.0))
 
     acc = pd.read_parquet(accounts_path)
     perf = pd.read_parquet(perf_path)
@@ -108,6 +109,15 @@ def score_asof(
     X[num_cols] = X[num_cols].fillna(0.0)
 
     pd_hat = pipe.predict_proba(X)[:, 1]
+
+    def logit(p):
+        p = np.clip(p, 1e-9, 1 - 1e-9)
+        return np.log(p / (1 - p))
+
+    def sigmoid(z):
+        return 1 / (1 + np.exp(-z))
+
+    pd_hat = sigmoid(logit(pd_hat) + citl_delta)
     out = x[["account_id", "segment"]].copy()
     out["asof_date"] = asof_dt
     out["pd_12m_hat"] = pd_hat.astype(float)
