@@ -233,8 +233,8 @@ def fit_pd_model(
     )
 
     clf = LogisticRegression(
-        max_iter=2000,
-        class_weight="balanced",  # handles low default rate
+        max_iter=4000,
+        class_weight=None,  # IMPORTANT: stop inflating base rate
         solver="lbfgs",
     )
 
@@ -244,6 +244,23 @@ def fit_pd_model(
     # Predict
     p_train = pipe.predict_proba(X_train)[:, 1]
     p_test = pipe.predict_proba(X_test)[:, 1]
+
+    # --- Calibration-in-the-large (CITL): shift logits so mean predicted matches observed ---
+    def logit(p):
+        p = np.clip(p, 1e-9, 1 - 1e-9)
+        return np.log(p / (1 - p))
+
+    def sigmoid(z):
+        return 1 / (1 + np.exp(-z))
+
+    obs_rate = float(y_train.mean())
+    pred_rate = float(p_train.mean())
+
+    # Shift in logit space
+    delta = logit(obs_rate) - logit(pred_rate)
+
+    p_train = sigmoid(logit(p_train) + delta)
+    p_test = sigmoid(logit(p_test) + delta)
 
     # Metrics
     auc_train = roc_auc_score(y_train, p_train) if y_train.nunique() > 1 else np.nan
@@ -262,8 +279,22 @@ def fit_pd_model(
     Path(metrics_path).parent.mkdir(parents=True, exist_ok=True)
     m = pd.DataFrame(
         [
-            {"split": "train", "auc": auc_train, "ks": ks_train, "n": len(train), "defaults": int(y_train.sum())},
-            {"split": "test", "auc": auc_test, "ks": ks_test, "n": len(test), "defaults": int(y_test.sum())},
+            {
+                "split": "train",
+                "auc": auc_train,
+                "ks": ks_train,
+                "n": len(train),
+                "defaults": int(y_train.sum()),
+                "citl_delta": delta,
+            },
+            {
+                "split": "test",
+                "auc": auc_test,
+                "ks": ks_test,
+                "n": len(test),
+                "defaults": int(y_test.sum()),
+                "citl_delta": delta,
+            },
         ]
     )
     m.to_csv(metrics_path, index=False)
@@ -309,7 +340,7 @@ def fit_pd_model(
     joblib.dump(pipe, model_path)
     print(f"Wrote: {model_path}")
 
-    schema = {"cat_cols": cat_cols, "num_cols": num_cols}
+    schema = {"cat_cols": cat_cols, "num_cols": num_cols, "citl_delta": float(delta)}
     Path(schema_path).parent.mkdir(parents=True, exist_ok=True)
     Path(schema_path).write_text(json.dumps(schema, indent=2))
     print(f"Wrote: {schema_path}")
