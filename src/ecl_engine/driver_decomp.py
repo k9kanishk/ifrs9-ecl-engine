@@ -8,6 +8,21 @@ import yaml
 from ecl_engine.ecl import compute_ecl_asof, load_yml
 from ecl_engine.overlay import apply_overlays
 
+ECL_WITH_OV = Path("data/curated/ecl_with_overlays.parquet")
+ECL_ASOF = Path("data/curated/ecl_output_asof_2024-12-31.parquet")  # fallback only
+
+
+def load_ecl_for_decomp() -> tuple[pd.Timestamp, pd.DataFrame]:
+    if ECL_WITH_OV.exists():
+        df = pd.read_parquet(ECL_WITH_OV)
+    else:
+        df = pd.read_parquet(ECL_ASOF)
+
+    df["asof_date"] = pd.to_datetime(df["asof_date"])
+    asof = df["asof_date"].max()
+    df = df[df["asof_date"] == asof].copy()
+    return asof, df
+
 
 def scenario_contribution(ecl_raw: pd.DataFrame, weights: dict) -> pd.DataFrame:
     """
@@ -59,6 +74,10 @@ def run_decomposition(
     overlays_path: str = "data/curated/overlays.csv",
     outdir: str = "data/curated",
 ) -> None:
+    asof_loaded, df = load_ecl_for_decomp()
+    if asof is None:
+        asof = asof_loaded
+
     staged = pd.read_parquet(staging_path)
     accounts = pd.read_parquet(accounts_path)
     macro = pd.read_parquet(macro_path)
@@ -140,7 +159,13 @@ def run_decomposition(
     print(scen_tbl.round(4))
 
     print("\nDriver decomposition (top 10 segments):")
-    print(decomp.head(10).round(2))
+    reported_col = (
+        "ecl_post_overlay" if "ecl_post_overlay" in df.columns else "ecl_selected"
+    )
+    seg_tot = (
+        df.groupby("segment")[reported_col].sum().sort_values(ascending=False).head(10)
+    )
+    print(seg_tot)
 
 
 if __name__ == "__main__":
