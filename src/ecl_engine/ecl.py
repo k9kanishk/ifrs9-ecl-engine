@@ -145,7 +145,13 @@ def compute_ecl_asof(
     pd_floor = float(policy["default"]["pd_floor"])
     pd_cap = float(policy["default"]["pd_cap"])
 
-    logit_ttc = _logit(df["ttc_pd_annual"].astype(float).to_numpy())[:, None]  # (n,1)
+    logit_ttc = _logit(np.clip(df["ttc_pd_annual"].astype(float).to_numpy(), 1e-12, 1 - 1e-12)).astype(
+        "float64"
+    )[:, None]  # (n,1)
+
+    # Phase 3: account-level anchor shift to match fitted 12M PD under Base scenario
+    if "pd_anchor_shift" in df.columns:
+        logit_ttc = logit_ttc + df["pd_anchor_shift"].fillna(0.0).to_numpy(dtype=np.float64)[:, None]
 
     # Macro z table for all scenarios
     mz = prepare_macro_z_all_scenarios(macro).copy()
@@ -255,21 +261,20 @@ def main() -> None:
     asof = pd.to_datetime(args.asof) if args.asof else staged["snapshot_date"].max()
     asof_dt = asof
 
-    # --- Phase 2: Use fitted 12M PD as anchor (optional) ---
+    # --- Phase 2/3: merge fitted PD + optional anchor shift ---
     pd_scores_path = Path(f"data/curated/pd_scores_asof_{asof_dt.date().isoformat()}.parquet")
     if pd_scores_path.exists():
         pd_scores = pd.read_parquet(pd_scores_path)
         accounts = accounts.merge(pd_scores[["account_id", "pd_12m_hat"]], on="account_id", how="left")
+        print(f"Loaded fitted PDs from: {pd_scores_path}")
 
-        # Replace TTC PD anchor with fitted PD (clip for numerical stability)
-        accounts["ttc_pd_annual"] = (
-            accounts["pd_12m_hat"]
-            .fillna(accounts["ttc_pd_annual"])
-            .clip(lower=1e-6, upper=0.999)
-        )
-        print(f"Using fitted PD anchor from: {pd_scores_path}")
+    shift_path = Path(f"data/curated/pd_anchor_shift_asof_{asof_dt.date().isoformat()}.parquet")
+    if shift_path.exists():
+        sh = pd.read_parquet(shift_path)
+        accounts = accounts.merge(sh[["account_id", "pd_anchor_shift"]], on="account_id", how="left")
+        print(f"Loaded PD anchor shifts from: {shift_path}")
     else:
-        print("No fitted PD score file found. Using accounts.ttc_pd_annual.")
+        accounts["pd_anchor_shift"] = 0.0
 
     out = compute_ecl_asof(
         staged=staged,
