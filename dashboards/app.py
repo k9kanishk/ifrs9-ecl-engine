@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import glob
+import os
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -304,6 +305,20 @@ else:
         st.dataframe(top, use_container_width=True, height=360)
     else:
         st.warning("Top accounts file not found for this overlay.")
+
+st.divider()
+
+st.markdown("## PD Model Validation (Phase 2)")
+
+if os.path.exists("reports/pd_validation_metrics.csv"):
+    met = pd.read_csv("reports/pd_validation_metrics.csv")
+    st.dataframe(met, use_container_width=True)
+else:
+    st.info("No PD validation metrics found. Run: python -m ecl_engine.models.pd_train")
+
+for img in ["reports/pd_roc.png", "reports/pd_calibration.png", "reports/pd_score_hist.png"]:
+    if os.path.exists(img):
+        st.image(img, caption=img)
 
 st.divider()
 
