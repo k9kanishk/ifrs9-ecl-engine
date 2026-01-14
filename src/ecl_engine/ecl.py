@@ -144,6 +144,7 @@ def compute_ecl_asof(
     betas = policy["default"]["pd_logit"]
     pd_floor = float(policy["default"]["pd_floor"])
     pd_cap = float(policy["default"]["pd_cap"])
+    macro_scale = float(policy["default"].get("macro_scale", 1.0))
 
     logit_ttc = _logit(np.clip(df["ttc_pd_annual"].astype(float).to_numpy(), 1e-12, 1 - 1e-12)).astype(
         "float64"
@@ -176,7 +177,7 @@ def compute_ecl_asof(
             + float(betas["policy_rate_z"]) * m[:, 2]
         ).astype(np.float32)[None, :]  # (1,H)
 
-        logit_pit = logit_ttc + x
+        logit_pit = logit_ttc + macro_scale * x
         pd_annual = np.clip(_sigmoid(logit_pit), pd_floor, pd_cap).astype(np.float32)  # (n,H)
 
         # monthly hazard from annual PD
