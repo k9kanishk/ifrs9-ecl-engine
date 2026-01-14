@@ -39,10 +39,13 @@ def load_latest_outputs():
     audit_path = "data/curated/overlay_audit.parquet"
     audit = pd.read_parquet(audit_path) if glob.glob(audit_path) else None
 
-    return asof, ecl, ecl_ov, scen, drv, qc, mig, audit
+    exp_path = f"data/curated/account_explain_asof_{asof}.parquet"
+    explain = pd.read_parquet(exp_path) if glob.glob(exp_path) else None
+
+    return asof, ecl, ecl_ov, scen, drv, qc, mig, audit, explain
 
 
-asof, ecl, ecl_ov, scen, drv, qc, mig, audit = load_latest_outputs()
+asof, ecl, ecl_ov, scen, drv, qc, mig, audit, explain = load_latest_outputs()
 
 st.subheader(f"ASOF: {asof}")
 
@@ -308,8 +311,62 @@ st.divider()
 st.markdown("### Account Drilldown")
 acct = st.text_input("Enter account_id (e.g., A0000123...)")
 if acct:
+    # base row from reported ECL file
     sub = ecl_ov[ecl_ov["account_id"] == acct].copy()
+
     if sub.empty:
         st.warning("No account found in current ASOF output.")
     else:
-        st.dataframe(sub.T, use_container_width=True)
+        st.markdown("#### Reported numbers (post-overlay)")
+        row = sub.iloc[0]
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Stage", int(row["stage"]))
+        c2.metric("Balance", f"{float(row['balance']):,.2f}")
+        c3.metric("Overlay", f"{float(row['overlay_amount']):,.2f}")
+        c4.metric("Reported ECL", f"{float(row['ecl_post_overlay']):,.2f}")
+
+        st.dataframe(sub, use_container_width=True)
+
+        st.markdown("#### Explanation (drivers + assumptions)")
+        if explain is None:
+            st.info("Explain file not found. Run: python -m ecl_engine.explain")
+        else:
+            ex = explain[explain["account_id"] == acct].copy()
+            if ex.empty:
+                st.warning("No explanation row found for this account.")
+            else:
+                exr = ex.iloc[0]
+
+                left, right = st.columns([1.2, 1])
+
+                with left:
+                    st.markdown("**Staging rationale**")
+                    st.write(exr.get("stage_reason", "N/A"))
+                    if "dpd" in ex.columns:
+                        st.write(f"DPD: {exr.get('dpd', 'N/A')}")
+                    st.write(f"Months to maturity: {int(exr.get('months_to_maturity', 0))}")
+
+                    st.markdown("**EAD / LGD / Discounting**")
+                    st.write(f"EAD rule: {exr.get('ead_rule','N/A')}")
+                    st.write(f"EAD0: {float(exr.get('ead0', 0.0)):,.2f}")
+                    st.write(f"Avg EAD (next 12m): {float(exr.get('ead12_avg', 0.0)):,.2f}")
+                    st.write(f"LGD base: {float(exr.get('lgd_base', 0.0)):.2%}")
+                    st.write(f"EIR (discount rate): {float(exr.get('eir', 0.0)):.2%}")
+
+                with right:
+                    st.markdown("**PD (PIT) summary**")
+                    st.write(f"TTC PD (annual): {float(exr.get('ttc_pd_annual', 0.0)):.2%}")
+                    st.write(f"PIT PD m1 Base: {float(exr.get('pit_pd_m1_base', 0.0)):.2%}")
+                    st.write(f"PIT PD m1 Downside: {float(exr.get('pit_pd_m1_downside', 0.0)):.2%}")
+                    st.write(f"Cumulative PD 12m Base: {float(exr.get('pit_cum_pd12_base', 0.0)):.2%}")
+                    st.write(
+                        f"Cumulative PD 12m Downside: {float(exr.get('pit_cum_pd12_downside', 0.0)):.2%}"
+                    )
+
+                    if "overlay_audit" in ex.columns:
+                        st.markdown("**Overlay tags**")
+                        st.code(str(exr.get("overlay_audit", "")))
+
+                st.markdown("#### Full explanation row")
+                st.dataframe(ex.T, use_container_width=True)
