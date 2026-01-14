@@ -253,6 +253,15 @@ def main() -> None:
 
     staged["snapshot_date"] = pd.to_datetime(staged["snapshot_date"])
     asof = pd.to_datetime(args.asof) if args.asof else staged["snapshot_date"].max()
+    asof_dt = asof
+
+    # Optional: override TTC PD with fitted 12M PD scores (phase 2)
+    pd_scores_path = f"data/curated/pd_scores_asof_{asof_dt.date().isoformat()}.parquet"
+    if Path(pd_scores_path).exists():
+        pd_scores = pd.read_parquet(pd_scores_path)
+        accounts = accounts.merge(pd_scores[["account_id", "pd_12m_hat"]], on="account_id", how="left")
+        # Use model PD as anchor PD (still gets PIT scenario transform downstream)
+        accounts["ttc_pd_annual"] = accounts["pd_12m_hat"].fillna(accounts["ttc_pd_annual"])
 
     out = compute_ecl_asof(
         staged=staged,
