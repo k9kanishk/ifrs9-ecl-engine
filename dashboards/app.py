@@ -165,6 +165,27 @@ with c4:
         drv_view = drv_view.sort_values("ecl_reported", ascending=False).head(15)
         st.dataframe(drv_view, use_container_width=True, height=360)
 
+st.markdown("## Scenario QC (Governance)")
+
+sev_path = f"data/curated/scenario_severity_asof_{asof}.csv"
+pdq_path = f"data/curated/scenario_pd_summary_asof_{asof}.csv"
+
+c1, c2 = st.columns(2)
+
+with c1:
+    st.markdown("### Macro severity (z-scores)")
+    if os.path.exists(sev_path):
+        st.dataframe(pd.read_csv(sev_path), use_container_width=True)
+    else:
+        st.info("Run: python -m ecl_engine.scenario_qc")
+
+with c2:
+    st.markdown("### Implied PIT PD summary (Stage 1+2)")
+    if os.path.exists(pdq_path):
+        st.dataframe(pd.read_csv(pdq_path), use_container_width=True)
+    else:
+        st.info("Run: python -m ecl_engine.scenario_qc")
+
 st.divider()
 
 # Row 3: Stage mix over time (from staging QC summary)
