@@ -6,6 +6,8 @@ default:
   pd_floor: 0.000001
   pd_cap: 0.999
 
+  macro_scale: 0.35
+
   # Simple PIT adjustment: logit(PD_PIT)=logit(PD_TTC)+intercept+betas*(macro_z)
   pd_logit:
     intercept: -0.25
