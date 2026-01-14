@@ -99,7 +99,8 @@ def make_pd_panel(
         )
 
     # Attach account-level vars
-    acc_keep = ["account_id", seg_acc]
+    # IMPORTANT: do NOT merge the segment column again, or you'll get segment_x/segment_y
+    acc_keep = ["account_id"]
     if limit_col:
         acc_keep.append(limit_col)
     if eir_col:
@@ -108,6 +109,14 @@ def make_pd_panel(
         acc_keep.append(ttc_col)
 
     base = base.merge(acc[acc_keep].copy(), on="account_id", how="left")
+
+    # Safety: if segment got duplicated earlier, normalize it back
+    if "segment" not in base.columns:
+        if "segment_x" in base.columns or "segment_y" in base.columns:
+            base["segment"] = base["segment_x"] if "segment_x" in base.columns else np.nan
+            if "segment_y" in base.columns:
+                base["segment"] = base["segment"].fillna(base["segment_y"])
+            base = base.drop(columns=[c for c in ["segment_x", "segment_y"] if c in base.columns])
 
     # Standardize names
     base = base.rename(columns={bal_col: "balance"})
