@@ -100,13 +100,15 @@ def build_account_explain(
             base["stage"] = base["stage"].fillna(e["stage"])
     base["stage"] = base["stage"].astype(int)
 
+    # Determine merge keys for performance snapshot (some datasets don't carry 'segment' in performance)
+    perf_keys = ["account_id"]
+    if "segment" in p.columns:
+        perf_keys.append("segment")
+
     # Bring dpd into explain if available
     if dpd_col:
-        base = base.merge(
-            p[["account_id", "segment", dpd_col]].rename(columns={dpd_col: "dpd"}),
-            on=["account_id", "segment"],
-            how="left",
-        )
+        dpd_df = p[perf_keys + [dpd_col]].rename(columns={dpd_col: "dpd"})
+        base = base.merge(dpd_df, on=perf_keys, how="left")
     else:
         base["dpd"] = np.nan
 
@@ -114,11 +116,8 @@ def build_account_explain(
     # Your ECL output already has "balance". If not, fallback to perf balance.
     if "balance" not in base.columns or base["balance"].isna().all():
         if bal_col:
-            base = base.merge(
-                p[["account_id", "segment", bal_col]].rename(columns={bal_col: "balance"}),
-                on=["account_id", "segment"],
-                how="left",
-            )
+            bal_df = p[perf_keys + [bal_col]].rename(columns={bal_col: "balance"})
+            base = base.merge(bal_df, on=perf_keys, how="left")
 
     # Load configs
     policy = load_yml(policy_path)
