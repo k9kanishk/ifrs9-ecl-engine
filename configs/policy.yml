@@ -3,15 +3,15 @@ default:
   sicr_dpd_backstop: 30
   stage3_if_default_flag: true
 
+  pd_floor: 0.000001
+  pd_cap: 0.999
+
   # Simple PIT adjustment: logit(PD_PIT)=logit(PD_TTC)+intercept+betas*(macro_z)
   pd_logit:
     intercept: -0.25
     unemployment_z: 0.25
     gdp_yoy_z: -0.18
     policy_rate_z: 0.12
-
-  pd_floor: 0.0001
-  pd_cap: 0.20
 
 sicr_pd_ratio_threshold:
   Retail_Mortgage: 2.0
