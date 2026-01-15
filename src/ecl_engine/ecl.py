@@ -304,7 +304,17 @@ def main() -> None:
     if not stage3_tbl.empty:
         out = out.merge(
             stage3_tbl[
-                ["account_id", "ead_default", "pv_recoveries", "workout_lgd", "ecl_stage3_workout", "workout_horizon_m"]
+                [
+                    "account_id",
+                    "ead_default",
+                    "pv_recoveries",
+                    "workout_lgd",
+                    "ecl_stage3_workout",
+                    "workout_horizon_m",
+                    "workout_total_recovery_assumed",
+                    "workout_half_life_months_assumed",
+                    "workout_collection_cost_assumed",
+                ]
             ],
             on="account_id",
             how="left",
@@ -334,6 +344,9 @@ def main() -> None:
         out["workout_lgd"] = np.nan
         out["ecl_stage3_workout"] = np.nan
         out["workout_horizon_m"] = np.nan
+        out["workout_total_recovery_assumed"] = np.nan
+        out["workout_half_life_months_assumed"] = np.nan
+        out["workout_collection_cost_assumed"] = np.nan
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)

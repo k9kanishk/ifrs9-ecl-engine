@@ -43,10 +43,13 @@ def load_latest_outputs():
     exp_path = f"data/curated/account_explain_asof_{asof}.parquet"
     explain = pd.read_parquet(exp_path) if glob.glob(exp_path) else None
 
-    return asof, ecl, ecl_ov, scen, drv, qc, mig, audit, explain
+    s3_path = f"data/curated/stage3_workout_summary_asof_{asof}.csv"
+    stage3_summary = pd.read_csv(s3_path) if glob.glob(s3_path) else None
+
+    return asof, ecl, ecl_ov, scen, drv, qc, mig, audit, explain, stage3_summary
 
 
-asof, ecl, ecl_ov, scen, drv, qc, mig, audit, explain = load_latest_outputs()
+asof, ecl, ecl_ov, scen, drv, qc, mig, audit, explain, stage3_summary = load_latest_outputs()
 
 st.subheader(f"ASOF: {asof}")
 
@@ -185,6 +188,21 @@ with c2:
         st.dataframe(pd.read_csv(pdq_path), use_container_width=True)
     else:
         st.info("Run: python -m ecl_engine.scenario_qc")
+
+st.divider()
+
+# Stage 3 workout summary
+st.markdown("## Stage 3 Workout Summary (Waterfall)")
+if stage3_summary is None:
+    st.info("Stage 3 workout summary not found. Run: python -m ecl_engine.stage3_summary")
+else:
+    s3_view = stage3_summary.copy()
+    for col in ["ead_default_sum", "pv_recoveries_sum", "ecl_sum"]:
+        if col in s3_view.columns:
+            s3_view[col] = s3_view[col].map(lambda x: f"{x:,.2f}")
+    if "implied_lgd" in s3_view.columns:
+        s3_view["implied_lgd"] = s3_view["implied_lgd"].map(lambda x: f"{x:.2%}")
+    st.dataframe(s3_view, use_container_width=True)
 
 st.divider()
 

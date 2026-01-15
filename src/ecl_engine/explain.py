@@ -279,6 +279,9 @@ def build_account_explain(
         "workout_lgd",
         "ecl_stage3_workout",
         "workout_horizon_m",
+        "workout_total_recovery_assumed",
+        "workout_half_life_months_assumed",
+        "workout_collection_cost_assumed",
         # scenario ECL already in output
         "ecl12_base",
         "ecl12_upside",
