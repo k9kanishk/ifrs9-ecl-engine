@@ -274,6 +274,11 @@ def build_account_explain(
         "ecl12_weighted",
         "ecllt_weighted",
         "ecl_selected",
+        "ead_default",
+        "pv_recoveries",
+        "workout_lgd",
+        "ecl_stage3_workout",
+        "workout_horizon_m",
         # scenario ECL already in output
         "ecl12_base",
         "ecl12_upside",

@@ -364,6 +364,13 @@ if acct:
 
         st.dataframe(sub, use_container_width=True)
 
+        if int(row["stage"]) == 3 and "pv_recoveries" in sub.columns:
+            st.markdown("#### Stage 3 Workout (recoveries-based)")
+            st.write(f"EAD@Default: {float(row.get('ead_default', 0.0)):,.2f}")
+            st.write(f"PV Recoveries: {float(row.get('pv_recoveries', 0.0)):,.2f}")
+            st.write(f"Workout LGD: {float(row.get('workout_lgd', 0.0)):.2%}")
+            st.write(f"Stage 3 ECL (workout): {float(row.get('ecl_stage3_workout', 0.0)):,.2f}")
+
         st.markdown("#### Explanation (drivers + assumptions)")
         if explain is None:
             st.info("Explain file not found. Run: python -m ecl_engine.explain")

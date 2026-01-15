@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from ecl_engine.models.lgd_workout import stage3_workout_table
 
 def _logit(p: np.ndarray) -> np.ndarray:
     p = np.clip(p, 1e-12, 1 - 1e-12)
@@ -228,11 +229,6 @@ def compute_ecl_asof(
         out["ecllt_weighted"].to_numpy(),
     ).astype("float64")
 
-    # Simple Stage 3 override (optional): defaulted exposure -> immediate loss proxy
-    # Keeps things sensible for a skeleton engine.
-    stage3 = out["stage"].to_numpy() == 3
-    out.loc[stage3, "ecl_selected"] = (out.loc[stage3, "balance"].astype("float64") * 0.9).to_numpy()  # conservative proxy
-
     out["asof_date"] = asof
     return out
 
@@ -243,6 +239,7 @@ def main() -> None:
     ap.add_argument("--max_horizon_months", type=int, default=360)
     ap.add_argument("--staging_path", type=str, default="data/curated/staging_output.parquet")
     ap.add_argument("--accounts_path", type=str, default="data/curated/accounts.parquet")
+    ap.add_argument("--perf_path", type=str, default="data/curated/performance_monthly.parquet")
     ap.add_argument("--macro_path", type=str, default="data/curated/macro_scenarios_monthly.parquet")
     ap.add_argument("--policy_path", type=str, default="configs/policy.yml")
     ap.add_argument("--weights_path", type=str, default="configs/scenario_weights.yml")
@@ -252,6 +249,7 @@ def main() -> None:
 
     staged = pd.read_parquet(args.staging_path)
     accounts = pd.read_parquet(args.accounts_path)
+    perf = pd.read_parquet(args.perf_path)
     macro = pd.read_parquet(args.macro_path)
 
     policy = load_yml(args.policy_path)
@@ -259,6 +257,7 @@ def main() -> None:
     params = load_yml(args.params_path)
 
     staged["snapshot_date"] = pd.to_datetime(staged["snapshot_date"])
+    perf["snapshot_date"] = pd.to_datetime(perf["snapshot_date"])
     asof = pd.to_datetime(args.asof) if args.asof else staged["snapshot_date"].max()
     asof_dt = asof
 
@@ -287,6 +286,54 @@ def main() -> None:
         asof=asof,
         max_horizon_months=args.max_horizon_months,
     )
+
+    # --- Phase 4: Stage 3 workout ECL (replace proxy) ---
+    # Build asof snapshots for staging/perf used in workout table
+    staging_asof = staged[staged["snapshot_date"] == asof_dt][["account_id", "stage"]].copy()
+    perf_asof = perf[perf["snapshot_date"] == asof_dt][["account_id", "balance"]].copy()
+
+    stage3_tbl = stage3_workout_table(
+        asof_dt=asof_dt,
+        accounts=accounts,
+        perf_asof=perf_asof,
+        staging_asof=staging_asof,
+        portfolio_params=params,
+        workout_cfg_path="configs/workout_lgd.yml",
+    )
+
+    if not stage3_tbl.empty:
+        out = out.merge(
+            stage3_tbl[
+                ["account_id", "ead_default", "pv_recoveries", "workout_lgd", "ecl_stage3_workout", "workout_horizon_m"]
+            ],
+            on="account_id",
+            how="left",
+        )
+
+        stage3 = out["stage"] == 3
+        # override final selected ECL for Stage 3
+        out.loc[stage3, "ecl_selected"] = out.loc[stage3, "ecl_stage3_workout"].astype("float64").to_numpy()
+
+        # for reporting consistency: set scenario/lifetime fields to the same Stage 3 value
+        for c in [
+            "ecl12_base",
+            "ecl12_upside",
+            "ecl12_downside",
+            "ecllt_base",
+            "ecllt_upside",
+            "ecllt_downside",
+            "ecl12_weighted",
+            "ecllt_weighted",
+        ]:
+            if c in out.columns:
+                out.loc[stage3, c] = out.loc[stage3, "ecl_stage3_workout"].astype("float64").to_numpy()
+    else:
+        # If no stage 3 accounts found, keep existing logic
+        out["ead_default"] = np.nan
+        out["pv_recoveries"] = np.nan
+        out["workout_lgd"] = np.nan
+        out["ecl_stage3_workout"] = np.nan
+        out["workout_horizon_m"] = np.nan
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)

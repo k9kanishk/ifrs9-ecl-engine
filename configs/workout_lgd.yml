@@ -1,0 +1,36 @@
+workout:
+  horizon_months: 36
+
+  # Recovery timing curve: exponential decay via half-life
+  # weight_t ∝ exp(-ln(2)*(t-1)/half_life_months)
+  curve: exp_half_life
+
+  # Segment-level assumptions (demo but realistic ranges)
+  segment_params:
+    Retail_Mortgage:
+      total_recovery: 0.70
+      half_life_months: 12
+      collection_cost: 0.05
+    Corp_TermLoan:
+      total_recovery: 0.50
+      half_life_months: 18
+      collection_cost: 0.10
+    SME_TermLoan:
+      total_recovery: 0.45
+      half_life_months: 18
+      collection_cost: 0.10
+    Retail_PL:
+      total_recovery: 0.25
+      half_life_months: 10
+      collection_cost: 0.15
+    Revolving:
+      total_recovery: 0.20
+      half_life_months: 8
+      collection_cost: 0.15
+
+  # Safety caps
+  recovery_cap: 0.95
+  recovery_floor: 0.00
+
+  # If EIR missing/invalid, fall back to this
+  fallback_eir_annual: 0.05
