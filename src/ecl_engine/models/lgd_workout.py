@@ -133,6 +133,9 @@ def stage3_workout_table(
             "workout_lgd": lgd,
             "ecl_stage3_workout": ecl3,
             "workout_horizon_m": H,
+            "workout_total_recovery_assumed": total_recovery,
+            "workout_half_life_months_assumed": half_life,
+            "workout_collection_cost_assumed": cost,
         }
     )
     out["asof_date"] = asof_dt
