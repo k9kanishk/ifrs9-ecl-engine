@@ -118,7 +118,10 @@ def stage3_workout_table_scenarios(
             pv[i] = float(np.sum(rec_cf * DF[i, :]))
 
         pv = np.minimum(pv, ead)
-        lgd = 1.0 - np.where(ead > 0, pv / ead, 0.0)
+        ratio = np.zeros_like(pv, dtype=np.float64)
+        mask = ead > 0
+        ratio[mask] = pv[mask] / ead[mask]
+        lgd = 1.0 - ratio
         lgd = np.clip(lgd, 0.0, 1.0)
         ecl = ead * lgd
         return pv, lgd, ecl
@@ -150,7 +153,11 @@ def stage3_workout_table_scenarios(
     w_base, w_up, w_dn = w_base / w_sum, w_up / w_sum, w_dn / w_sum
 
     out["pv_recoveries"] = w_base * pv_s["Base"] + w_up * pv_s["Upside"] + w_dn * pv_s["Downside"]
-    out["workout_lgd"] = np.clip(1.0 - np.where(ead > 0, out["pv_recoveries"].to_numpy() / ead, 0.0), 0.0, 1.0)
+    pvw = out["pv_recoveries"].to_numpy(dtype=np.float64)
+    ratio = np.zeros_like(pvw, dtype=np.float64)
+    mask = ead > 0
+    ratio[mask] = pvw[mask] / ead[mask]
+    out["workout_lgd"] = np.clip(1.0 - ratio, 0.0, 1.0)
     out["ecl_stage3_workout"] = w_base * ecl_s["Base"] + w_up * ecl_s["Upside"] + w_dn * ecl_s["Downside"]
 
     # audit baseline assumptions
