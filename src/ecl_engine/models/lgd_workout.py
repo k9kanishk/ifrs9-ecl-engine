@@ -118,7 +118,8 @@ def stage3_workout_table_scenarios(
             pv[i] = float(np.sum(rec_cf * DF[i, :]))
 
         pv = np.minimum(pv, ead)
-        ratio = np.divide(pv, ead, out=np.zeros_like(pv, dtype=np.float64), where=ead > 0)
+        ratio = np.zeros_like(pv, dtype=np.float64)
+        np.divide(pv, ead, out=ratio, where=ead > 0)
         lgd = 1.0 - ratio
         lgd = np.clip(lgd, 0.0, 1.0)
         ecl = ead * lgd
@@ -152,7 +153,8 @@ def stage3_workout_table_scenarios(
 
     out["pv_recoveries"] = w_base * pv_s["Base"] + w_up * pv_s["Upside"] + w_dn * pv_s["Downside"]
     pvw = out["pv_recoveries"].to_numpy(dtype=np.float64)
-    ratio_w = np.divide(pvw, ead, out=np.zeros_like(pvw, dtype=np.float64), where=ead > 0)
+    ratio_w = np.zeros(len(out), dtype=np.float64)
+    np.divide(out["pv_recoveries"].to_numpy(dtype=np.float64), ead, out=ratio_w, where=ead > 0)
     out["workout_lgd"] = np.clip(1.0 - ratio_w, 0.0, 1.0)
     out["ecl_stage3_workout"] = w_base * ecl_s["Base"] + w_up * ecl_s["Upside"] + w_dn * ecl_s["Downside"]
 
