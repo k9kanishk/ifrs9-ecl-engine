@@ -5,7 +5,8 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
-from ecl_engine.ecl import compute_ecl_asof, load_yml
+from ecl_engine.ecl import compute_ecl_asof
+from ecl_engine.utils.io import load_yml
 from ecl_engine.overlay import apply_overlays
 
 ECL_WITH_OV = Path("data/curated/ecl_with_overlays.parquet")

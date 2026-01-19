@@ -9,10 +9,10 @@ import pandas as pd
 from ecl_engine.ecl import (
     _logit,
     _sigmoid,
-    load_yml,
     month_end_index,
     prepare_macro_z_all_scenarios,
 )
+from ecl_engine.utils.io import load_yml
 
 
 def _macro_block_ffill(mz_scen: pd.DataFrame, dates: pd.DatetimeIndex) -> np.ndarray:
