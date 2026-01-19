@@ -9,7 +9,7 @@ def _month_end(x) -> pd.Timestamp:
     return (pd.to_datetime(x) + pd.offsets.MonthEnd(0)).normalize()
 
 
-def main(asof: str = "2024-12-31", n: int = 8000) -> None:
+def main(asof: str = "2024-12-31", n: int = 0) -> None:
     asof_dt = _month_end(asof).date().isoformat()
 
     p_post = Path("data/curated/ecl_with_overlays.parquet")
@@ -69,10 +69,11 @@ def main(asof: str = "2024-12-31", n: int = 8000) -> None:
         out["ecl_over_ead"] = np.nan
 
     # Identify biggest accounts by ECL for drilldown
-    out = out.sort_values("ecl_final", ascending=False)
+    out = out.sort_values("ecl_final", ascending=False).reset_index(drop=True)
 
     # cap size for dashboard performance
-    out = out.head(int(n)).reset_index(drop=True)
+    if int(n) > 0:
+        out = out.head(int(n)).reset_index(drop=True)
 
     out_path = Path(f"data/curated/account_explain_asof_{asof_dt}.parquet")
     out.to_parquet(out_path, index=False)
@@ -86,6 +87,6 @@ if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--asof", default="2024-12-31")
-    ap.add_argument("--n", type=int, default=8000)
+    ap.add_argument("--n", type=int, default=0)
     args = ap.parse_args()
     main(asof=args.asof, n=args.n)
