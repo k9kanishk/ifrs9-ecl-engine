@@ -269,6 +269,8 @@ def compute_ecl_from_frames(
 
     out = base.copy()
     out["ead"] = ead
+    # IMPORTANT: asof_date must exist for ALL rows (not just Stage 3)
+    out["asof_date"] = asof_dt
 
     # add scenario PD columns + scenario LGD columns (for explainability)
     for s in scen_list:
@@ -280,6 +282,8 @@ def compute_ecl_from_frames(
 
     # merge stage 3 workout scenario outputs
     if not stage3_tbl.empty:
+        # avoid partially populated asof_date from stage3_tbl
+        stage3_tbl = stage3_tbl.drop(columns=["asof_date"], errors="ignore")
         out = out.merge(stage3_tbl, on="account_id", how="left")
         stage3 = out["stage"] == 3
 
@@ -296,6 +300,9 @@ def compute_ecl_from_frames(
         out.loc[stage3, "lgd_base"] = out.loc[stage3, "workout_lgd_base"]
         out.loc[stage3, "lgd_upside"] = out.loc[stage3, "workout_lgd_upside"]
         out.loc[stage3, "lgd_downside"] = out.loc[stage3, "workout_lgd_downside"]
+
+    # IMPORTANT: overwrite again to guarantee no NaT survives any merge logic
+    out["asof_date"] = asof_dt
 
     # Ensure the scenario columns exist with your naming convention
     # (your repo previously used ecl12_base, etc.)
