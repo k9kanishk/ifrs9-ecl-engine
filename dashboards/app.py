@@ -4,6 +4,7 @@ import glob
 import os
 
 import pandas as pd
+import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
@@ -312,9 +313,14 @@ else:
     qc2 = qc[qc["segment"].isin(sel_segments)].copy()
     # aggregate across segments for a clean view
     qc_total = qc2.groupby(["snapshot_date", "stage"], as_index=False)["n_accounts"].sum()
-    # pivot for chart
-    pivot = qc_total.pivot(index="snapshot_date", columns="stage", values="n_accounts").fillna(0).sort_index()
-    st.line_chart(pivot)
+    fig = px.line(
+        qc_total,
+        x="snapshot_date",
+        y="n_accounts",
+        color="stage",
+        title="Stage Counts Over Time (QC)",
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
 st.divider()
 
@@ -420,8 +426,14 @@ else:
     for s in [s12, s21, s13, s23]:
         trend = s if trend is None else trend.merge(s, on="to_date", how="outer")
 
-    trend = trend.fillna(0.0).sort_values("to_date").set_index("to_date")
-    st.line_chart(trend)
+    trend = trend.fillna(0.0).sort_values("to_date")
+    fig = px.line(
+        trend,
+        x="to_date",
+        y=["1→2 (SICR)", "2→1 (Cure)", "1→3 (Default)", "2→3 (Default)"],
+        title="Stage Migration Trend",
+    )
+    st.plotly_chart(fig, use_container_width=True)
     st.caption("Percentages are conditional on the 'from stage' population each month.")
 
 st.divider()

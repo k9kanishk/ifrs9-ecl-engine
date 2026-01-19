@@ -11,6 +11,7 @@ def _month_end(x) -> pd.Timestamp:
 
 def main(asof: str = "2024-12-31", n: int = 0) -> None:
     asof_dt = _month_end(asof).date().isoformat()
+    asof_ts = pd.to_datetime(asof_dt)
 
     p_post = Path("data/curated/ecl_with_overlays.parquet")
     p_pre = Path(f"data/curated/ecl_output_asof_{asof_dt}.parquet")
@@ -26,9 +27,13 @@ def main(asof: str = "2024-12-31", n: int = 0) -> None:
 
     # Ensure consistent columns
     df = df.copy()
-    if "asof_date" in df.columns:
-        df["asof_date"] = pd.to_datetime(df["asof_date"]).dt.date.astype(str)
-        df = df[df["asof_date"] == asof_dt].copy()
+    if "asof_date" not in df.columns:
+        df["asof_date"] = asof_ts
+    else:
+        df["asof_date"] = pd.to_datetime(df["asof_date"], errors="coerce")
+        if df["asof_date"].isna().any():
+            df["asof_date"] = df["asof_date"].fillna(asof_ts)
+    df = df[df["asof_date"] == asof_ts].copy()
 
     # Prefer post-overlay column if available
     if "ecl_post_overlay" in df.columns:
