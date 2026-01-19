@@ -4,7 +4,9 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 
-from ecl_engine.ecl import prepare_macro_z_all_scenarios, _logit, _sigmoid, month_end_index
+from ecl_engine.ecl import prepare_macro_z_all_scenarios
+from ecl_engine.utils.dates import month_end_index
+from ecl_engine.utils.math import logit, sigmoid
 from ecl_engine.utils.io import load_yml
 
 
@@ -90,7 +92,7 @@ def compute_scenario_qc(
 
     # base logits
     ttc = np.clip(a["ttc_pd_annual"].astype(float).to_numpy(), 1e-9, 1 - 1e-9)
-    logit_ttc = _logit(ttc).astype(np.float64)
+    logit_ttc = logit(ttc).astype(np.float64)
     logit_ttc = logit_ttc + a["pd_anchor_shift"].fillna(0.0).to_numpy(dtype=np.float64)
 
     def pit_pd_summary_for_scenario(scen: str) -> pd.DataFrame:
@@ -106,7 +108,7 @@ def compute_scenario_qc(
         z = macro_scale * z  # <-- key governance knob
 
         # (N, H) annual PDs
-        pd_annual = np.clip(_sigmoid(logit_ttc[:, None] + z[None, :]), pd_floor, pd_cap).astype(np.float64)
+        pd_annual = np.clip(sigmoid(logit_ttc[:, None] + z[None, :]), pd_floor, pd_cap).astype(np.float64)
 
         # monthly hazard and 12m cumulative PD
         h = 1.0 - np.power(1.0 - pd_annual, 1.0 / 12.0)
