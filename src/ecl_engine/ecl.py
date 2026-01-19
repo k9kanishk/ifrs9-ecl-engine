@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from ecl_engine.models.lgd_workout import stage3_workout_table_scenarios
 from ecl_engine.utils.io import load_yml
-from ecl_engine.utils.macro import normalize_macro_z_columns
+from ecl_engine.utils.macro import prepare_macro_for_ecl
 
 
 def as_month_end(x) -> pd.Timestamp:
@@ -88,8 +88,8 @@ def compute_ecl_from_frames(
     macro = macro.copy()
 
     staged["snapshot_date"] = staged["snapshot_date"].apply(as_month_end)
-    macro["date"] = macro["date"].apply(as_month_end)
-    macro = normalize_macro_z_columns(macro)
+    # macro must be multi-index (scenario, date) with *_z columns
+    mz = prepare_macro_for_ecl(macro)
 
     asof_dt = as_month_end(asof_dt)
     staging_asof = staged[staged["snapshot_date"] == asof_dt][["account_id", "stage"]].copy()
@@ -128,7 +128,6 @@ def compute_ecl_from_frames(
     base["pd_12m_anchor"] = pd_anchor
 
     # Macro setup
-    mz = macro.set_index(["scenario", "date"]).sort_index()
     scen_list = ["Base", "Upside", "Downside"]
     future_dates_36 = month_ends_forward(asof_dt, periods=36)
     future_dates_12 = future_dates_36[:12]
