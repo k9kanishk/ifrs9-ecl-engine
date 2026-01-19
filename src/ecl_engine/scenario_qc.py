@@ -4,7 +4,8 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 
-from ecl_engine.ecl import load_yml, prepare_macro_z_all_scenarios, _logit, _sigmoid, month_end_index
+from ecl_engine.ecl import prepare_macro_z_all_scenarios, _logit, _sigmoid, month_end_index
+from ecl_engine.utils.io import load_yml
 
 
 def _macro_block_ffill(mz_scen: pd.DataFrame, dates: pd.DatetimeIndex) -> pd.DataFrame:

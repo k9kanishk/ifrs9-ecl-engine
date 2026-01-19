@@ -4,14 +4,8 @@ import argparse
 from pathlib import Path
 import numpy as np
 import pandas as pd
-import yaml
-
 from ecl_engine.models.lgd_workout import stage3_workout_table_scenarios
-
-
-def load_yml(path: str) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+from ecl_engine.utils.io import load_yml
 
 
 def as_month_end(x) -> pd.Timestamp:

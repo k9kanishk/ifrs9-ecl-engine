@@ -9,7 +9,8 @@ import pandas as pd
 import yaml
 
 # Reuse ECL helpers where possible
-from ecl_engine.ecl import load_yml, month_end_index, prepare_macro_z_all_scenarios, _logit, _sigmoid
+from ecl_engine.ecl import month_end_index, prepare_macro_z_all_scenarios, _logit, _sigmoid
+from ecl_engine.utils.io import load_yml
 
 
 def _pick_col(df: pd.DataFrame, candidates: list[str]) -> str | None:

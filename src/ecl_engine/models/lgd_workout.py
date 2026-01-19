@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from ecl_engine.ecl import load_yml
+from ecl_engine.utils.io import load_yml
 
 
 def _exp_half_life_weights(horizon: int, half_life_months: float) -> np.ndarray:
