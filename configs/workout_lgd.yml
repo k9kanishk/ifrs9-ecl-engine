@@ -1,11 +1,8 @@
 workout:
   horizon_months: 36
 
-  # Recovery timing curve: exponential decay via half-life
-  # weight_t ∝ exp(-ln(2)*(t-1)/half_life_months)
   curve: exp_half_life
 
-  # Segment-level assumptions (demo but realistic ranges)
   segment_params:
     Retail_Mortgage:
       total_recovery: 0.70
@@ -28,9 +25,22 @@ workout:
       half_life_months: 8
       collection_cost: 0.15
 
-  # Safety caps
   recovery_cap: 0.95
   recovery_floor: 0.00
-
-  # If EIR missing/invalid, fall back to this
   fallback_eir_annual: 0.05
+
+  # ---- Phase 5: scenario linkage for Stage 3 recoveries ----
+  scenario_linkage:
+    # total_recovery_scen = total_recovery * exp(-recovery_beta * stress)
+    recovery_beta_by_segment:
+      Retail_Mortgage: 0.08
+      Corp_TermLoan: 0.15
+      SME_TermLoan: 0.18
+      Retail_PL: 0.20
+      Revolving: 0.22
+
+    # half_life_scen = half_life * (1 + half_life_beta * max(stress,0))
+    half_life_beta: 0.08
+
+    # cost_scen = cost * (1 + cost_beta * max(stress,0))
+    cost_beta: 0.10

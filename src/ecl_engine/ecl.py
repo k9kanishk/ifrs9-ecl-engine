@@ -2,363 +2,325 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import yaml
 
-from ecl_engine.models.lgd_workout import stage3_workout_table
-
-def _logit(p: np.ndarray) -> np.ndarray:
-    p = np.clip(p, 1e-12, 1 - 1e-12)
-    return np.log(p / (1 - p))
+from ecl_engine.models.lgd_workout import stage3_workout_table_scenarios
 
 
-def _sigmoid(x: np.ndarray) -> np.ndarray:
-    return 1.0 / (1.0 + np.exp(-x))
-
-
-def load_yml(path: str | Path) -> dict:
-    with open(path, "r") as f:
+def load_yml(path: str) -> dict:
+    with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
-def month_end_index(start_me: pd.Timestamp, periods: int) -> pd.DatetimeIndex:
-    # future month-ends starting next month-end
+def as_month_end(x) -> pd.Timestamp:
+    return (pd.to_datetime(x) + pd.offsets.MonthEnd(0)).normalize()
+
+
+def sigmoid(z: np.ndarray) -> np.ndarray:
+    return 1.0 / (1.0 + np.exp(-z))
+
+
+def logit(p: np.ndarray) -> np.ndarray:
+    p = np.clip(p, 1e-6, 1 - 1e-6)
+    return np.log(p / (1 - p))
+
+
+def month_ends_forward(asof_dt: pd.Timestamp, periods: int) -> pd.DatetimeIndex:
+    # freq="ME" avoids pandas 'M' deprecation warning
+    start_me = as_month_end(asof_dt)
     return pd.date_range(start=start_me + pd.offsets.MonthEnd(1), periods=periods, freq="ME")
 
 
-def macro_block_ffill(mz: pd.DataFrame, scen: str, dates: pd.DatetimeIndex) -> np.ndarray:
-    """
-    mz: MultiIndex (scenario, date) -> columns unemployment_z, gdp_yoy_z, policy_rate_z
-    dates: desired future dates (month-ends)
-    Returns (H,3) macro z block, forward-filled beyond last known macro date.
-    """
-    dates = pd.to_datetime(dates)
-
-    # Extract one scenario with date index
-    df = mz.xs(scen, level=0).sort_index()
-
-    # Extend index to include required dates, then forward fill
-    idx = df.index.union(dates)
-    df2 = df.reindex(idx).sort_index().ffill()
-
-    # If dates are earlier than the first macro date (unlikely), backfill them
-    df2 = df2.bfill()
-
-    return df2.loc[dates, ["unemployment_z", "gdp_yoy_z", "policy_rate_z"]].to_numpy(dtype=np.float32)
+def compute_stress_scalar(
+    mz: pd.DataFrame,
+    scenario: str,
+    future_dates: pd.DatetimeIndex,
+    stress_weights: dict,
+    horizon_months: int,
+) -> float:
+    cols = ["unemployment_z", "gdp_yoy_z", "policy_rate_z"]
+    m = mz.loc[(scenario, future_dates), cols].iloc[:horizon_months].to_numpy(dtype=np.float64)
+    w_u = float(stress_weights.get("unemployment_z", 1.0))
+    w_g = float(stress_weights.get("gdp_yoy_z", -0.5))
+    w_r = float(stress_weights.get("policy_rate_z", 0.25))
+    stress = w_u * m[:, 0] + w_g * m[:, 1] + w_r * m[:, 2]
+    return float(np.mean(stress))
 
 
-def prepare_macro_z_all_scenarios(macro: pd.DataFrame) -> pd.DataFrame:
-    """
-    Compute z-scores using Base scenario mean/std, apply to all scenarios.
-    """
-    macro = macro.copy()
-    macro["date"] = pd.to_datetime(macro["date"])
-
-    base = macro.loc[macro["scenario"] == "Base", ["unemployment", "gdp_yoy", "policy_rate"]]
-    stats = {}
-    for col in ["unemployment", "gdp_yoy", "policy_rate"]:
-        mu = base[col].mean()
-        sd = base[col].std(ddof=0)
-        stats[col] = (mu, sd if sd > 0 else 1.0)
-
-    for col in ["unemployment", "gdp_yoy", "policy_rate"]:
-        mu, sd = stats[col]
-        macro[f"{col}_z"] = (macro[col] - mu) / sd
-
-    return macro[["date", "scenario", "unemployment_z", "gdp_yoy_z", "policy_rate_z"]]
-
-
-def months_to_maturity(asof: pd.Timestamp, maturity: pd.Series) -> np.ndarray:
-    """
-    Integer number of months between asof month-end and maturity month-end (>=1).
-    """
-    asof_me = (asof + pd.offsets.MonthEnd(0)).normalize()
-    mat_me = (pd.to_datetime(maturity) + pd.offsets.MonthEnd(0)).dt.normalize()
-    m = (mat_me.dt.year - asof_me.year) * 12 + (mat_me.dt.month - asof_me.month)
-    m = m.astype(int).to_numpy()
-    return np.maximum(m, 1)
-
-
-def compute_ecl_asof(
-    staged: pd.DataFrame,
-    accounts: pd.DataFrame,
-    macro: pd.DataFrame,
-    policy: dict,
-    scenario_weights: dict,
-    portfolio_params: dict,
-    asof: pd.Timestamp,
-    max_horizon_months: int = 360,
-) -> pd.DataFrame:
-    """
-    Returns per-account ECL at asof date:
-      - scenario ECLs (12m, lifetime)
-      - scenario-weighted ECL
-      - stage-selected ECL (Stage1=12m, Stage2/3=lifetime)
-    """
-    asof = pd.to_datetime(asof)
-    df = staged.loc[staged["snapshot_date"] == asof].copy()
-    if df.empty:
-        raise ValueError(f"No rows found for asof={asof.date()} in staging_output.")
-
-    # Join account fields we need
-    acc_cols = ["account_id", "segment", "eir", "maturity_date", "limit_amount", "ttc_pd_annual"]
-    df = df.merge(accounts[acc_cols], on=["account_id", "segment"], how="left", validate="many_to_one")
-
-    n = len(df)
-    seg = df["segment"].astype(str).to_numpy()
-
-    # Horizon per account (months)
-    h_m = months_to_maturity(asof, df["maturity_date"])
-    H = int(min(max_horizon_months, int(np.max(h_m))))
-    t = np.arange(1, H + 1, dtype=np.float32)[None, :]  # (1,H)
-    mask = (t <= h_m[:, None]).astype(np.float32)  # (n,H)
-
-    # Discount factors
-    eir = df["eir"].astype(float).to_numpy()[:, None]  # (n,1)
-    df_disc = np.power(1.0 + eir, -(t / 12.0), dtype=np.float32)  # (n,H)
-
-    # EAD projection (simple)
-    bal0 = df["balance"].astype(float).to_numpy()[:, None]  # (n,1)
-
-    amort_map = portfolio_params["amort_rate_monthly"]
-    amort = np.vectorize(lambda s: float(amort_map.get(s, 0.01)))(seg).astype(np.float32)[:, None]
-    bal_path = bal0 * np.power((1.0 - amort), t, dtype=np.float32)  # (n,H)
-
-    # Revolving EAD uses CCF on undrawn
-    limit = df["limit_amount"].fillna(0.0).astype(float).to_numpy()[:, None]
-    is_rev = (seg == "Revolving")[:, None]
-
-    ccf = float(portfolio_params.get("ccf_base", {}).get("Revolving", 0.75))
-    ead_rev = bal0 + ccf * np.maximum(limit - bal0, 0.0)
-
-    ead = np.where(is_rev, ead_rev, bal_path).astype(np.float32)  # (n,H)
-    ead *= mask
-
-    # LGD by segment + scenario multipliers
-    lgd_base_map = portfolio_params["lgd_base"]
-    lgd_base = np.vectorize(lambda s: float(lgd_base_map.get(s, 0.5)))(seg).astype(np.float32)[:, None]
-    lgd_base = np.clip(lgd_base, 0.0, 1.0)
-
-    # PD PIT term structure driven by macro scenarios using same policy betas
-    betas = policy["default"]["pd_logit"]
-    pd_floor = float(policy["default"]["pd_floor"])
-    pd_cap = float(policy["default"]["pd_cap"])
-    macro_scale = float(policy["default"].get("macro_scale", 1.0))
-
-    logit_ttc = _logit(np.clip(df["ttc_pd_annual"].astype(float).to_numpy(), 1e-12, 1 - 1e-12)).astype(
-        "float64"
-    )[:, None]  # (n,1)
-
-    # Phase 3: account-level anchor shift to match fitted 12M PD under Base scenario
-    if "pd_anchor_shift" in df.columns:
-        logit_ttc = logit_ttc + df["pd_anchor_shift"].fillna(0.0).to_numpy(dtype=np.float64)[:, None]
-
-    # Macro z table for all scenarios
-    mz = prepare_macro_z_all_scenarios(macro).copy()
-    mz = mz.set_index(["scenario", "date"]).sort_index()
-
-    future_dates = month_end_index((asof + pd.offsets.MonthEnd(0)).normalize(), H)
-
-    results = {
-        "account_id": df["account_id"].values,
-        "segment": df["segment"].values,
-        "stage": df["stage"].astype(int).values,
-        "balance": df["balance"].values,
-    }
-
-    for scen in ["Base", "Upside", "Downside"]:
-        m = macro_block_ffill(mz, scen, future_dates)  # (H,3)
-
-        x = (
-            float(betas["intercept"])
-            + float(betas["unemployment_z"]) * m[:, 0]
-            + float(betas["gdp_yoy_z"]) * m[:, 1]
-            + float(betas["policy_rate_z"]) * m[:, 2]
-        ).astype(np.float32)[None, :]  # (1,H)
-
-        logit_pit = logit_ttc + macro_scale * x
-        pd_annual = np.clip(_sigmoid(logit_pit), pd_floor, pd_cap).astype(np.float32)  # (n,H)
-
-        # monthly hazard from annual PD
-        h = (1.0 - np.power((1.0 - pd_annual), (1.0 / 12.0))).astype(np.float32)  # (n,H)
-        h *= mask
-
-        # survival and marginal PD
-        surv = np.cumprod(1.0 - h, axis=1, dtype=np.float32)
-        surv_prev = np.concatenate([np.ones((n, 1), dtype=np.float32), surv[:, :-1]], axis=1)
-        mpd = (surv_prev * h).astype(np.float32)  # (n,H)
-
-        # scenario LGD
-        mult = float(portfolio_params["lgd_scenario_multiplier"].get(scen, 1.0))
-        lgd = np.clip(lgd_base * mult, 0.0, 1.0).astype(np.float32)
-
-        el = df_disc * ead * lgd * mpd  # (n,H)
-
-        ecl_12m = el[:, : min(12, H)].sum(axis=1)
-        ecl_lt = el.sum(axis=1)
-
-        results[f"ecl12_{scen.lower()}"] = ecl_12m
-        results[f"ecllt_{scen.lower()}"] = ecl_lt
-
-    # Scenario weights
-    w = scenario_weights["weights"]
-    w_base = float(w["Base"])
-    w_up = float(w["Upside"])
-    w_dn = float(w["Downside"])
-
-    results["ecl12_weighted"] = (
-        w_base * results["ecl12_base"] + w_up * results["ecl12_upside"] + w_dn * results["ecl12_downside"]
-    )
-    results["ecllt_weighted"] = (
-        w_base * results["ecllt_base"] + w_up * results["ecllt_upside"] + w_dn * results["ecllt_downside"]
-    )
-
-    out = pd.DataFrame(results)
-    # Ensure float64 for stable downstream assignments / reports
-    for c in out.columns:
-        if c.startswith("ecl"):
-            out[c] = out[c].astype("float64")
-
-    # Stage-selected ECL
-    # Stage1 -> 12m, Stage2/3 -> lifetime
-    out["ecl_selected"] = np.where(
-        out["stage"].to_numpy() == 1,
-        out["ecl12_weighted"].to_numpy(),
-        out["ecllt_weighted"].to_numpy(),
-    ).astype("float64")
-
-    out["asof_date"] = asof
-    return out
-
-
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--asof", type=str, default=None, help="YYYY-MM-DD month-end; default uses latest in staging_output")
-    ap.add_argument("--max_horizon_months", type=int, default=360)
-    ap.add_argument("--staging_path", type=str, default="data/curated/staging_output.parquet")
-    ap.add_argument("--accounts_path", type=str, default="data/curated/accounts.parquet")
-    ap.add_argument("--perf_path", type=str, default="data/curated/performance_monthly.parquet")
-    ap.add_argument("--macro_path", type=str, default="data/curated/macro_scenarios_monthly.parquet")
-    ap.add_argument("--policy_path", type=str, default="configs/policy.yml")
-    ap.add_argument("--weights_path", type=str, default="configs/scenario_weights.yml")
-    ap.add_argument("--params_path", type=str, default="configs/portfolio_params.yml")
-    ap.add_argument("--outdir", type=str, default="data/curated")
-    args = ap.parse_args()
-
-    staged = pd.read_parquet(args.staging_path)
-    accounts = pd.read_parquet(args.accounts_path)
-    perf = pd.read_parquet(args.perf_path)
-    macro = pd.read_parquet(args.macro_path)
-
-    policy = load_yml(args.policy_path)
-    weights = load_yml(args.weights_path)
-    params = load_yml(args.params_path)
-
-    staged["snapshot_date"] = pd.to_datetime(staged["snapshot_date"])
-    perf["snapshot_date"] = pd.to_datetime(perf["snapshot_date"])
-    asof = pd.to_datetime(args.asof) if args.asof else staged["snapshot_date"].max()
-    asof_dt = asof
-
-    # --- Phase 2/3: merge fitted PD + optional anchor shift ---
-    pd_scores_path = Path(f"data/curated/pd_scores_asof_{asof_dt.date().isoformat()}.parquet")
-    if pd_scores_path.exists():
-        pd_scores = pd.read_parquet(pd_scores_path)
-        accounts = accounts.merge(pd_scores[["account_id", "pd_12m_hat"]], on="account_id", how="left")
-        print(f"Loaded fitted PDs from: {pd_scores_path}")
-
-    shift_path = Path(f"data/curated/pd_anchor_shift_asof_{asof_dt.date().isoformat()}.parquet")
-    if shift_path.exists():
-        sh = pd.read_parquet(shift_path)
-        accounts = accounts.merge(sh[["account_id", "pd_anchor_shift"]], on="account_id", how="left")
-        print(f"Loaded PD anchor shifts from: {shift_path}")
+def months_to_maturity(accounts_asof: pd.DataFrame, asof_dt: pd.Timestamp, params: dict) -> np.ndarray:
+    default_map = params.get("default_maturity_months_by_segment", {})
+    if "maturity_date" in accounts_asof.columns:
+        md = pd.to_datetime(accounts_asof["maturity_date"], errors="coerce")
+        m = ((md.dt.to_period("M") - asof_dt.to_period("M")).apply(lambda x: x.n)).astype("float64")
+        m = m.fillna(0.0).to_numpy()
+        # if missing/<=0 fall back to segment defaults
+        seg = accounts_asof["segment"].astype(str).to_numpy()
+        fallback = np.array([float(default_map.get(s, 36)) for s in seg], dtype=np.float64)
+        m = np.where(m > 0, m, fallback)
     else:
-        accounts["pd_anchor_shift"] = 0.0
+        seg = accounts_asof["segment"].astype(str).to_numpy()
+        m = np.array([float(default_map.get(s, 36)) for s in seg], dtype=np.float64)
+    return np.clip(m, 1.0, 360.0)
 
-    out = compute_ecl_asof(
-        staged=staged,
-        accounts=accounts,
-        macro=macro,
-        policy=policy,
-        scenario_weights=weights,
-        portfolio_params=params,
-        asof=asof,
-        max_horizon_months=args.max_horizon_months,
-    )
 
-    # --- Phase 4: Stage 3 workout ECL (replace proxy) ---
-    # Build asof snapshots for staging/perf used in workout table
-    staging_asof = staged[staged["snapshot_date"] == asof_dt][["account_id", "stage"]].copy()
+def compute_ead(balance: np.ndarray, limit_amount: np.ndarray, segment: np.ndarray, params: dict) -> np.ndarray:
+    ccf_map = params.get("ccf_base", {})
+    ccf_rev = float(ccf_map.get("Revolving", 0.75))
+    is_rev = segment == "Revolving"
+    undrawn = np.maximum(limit_amount - balance, 0.0)
+    ead = balance.copy()
+    ead[is_rev] = balance[is_rev] + ccf_rev * undrawn[is_rev]
+    return np.maximum(ead, 0.0)
+
+
+def compute_ecl_asof(asof_dt: pd.Timestamp, params: dict) -> pd.DataFrame:
+    # --- Load curated inputs ---
+    accounts = pd.read_parquet("data/curated/accounts.parquet")
+    perf = pd.read_parquet("data/curated/performance_monthly.parquet")
+    staging = pd.read_parquet("data/curated/staging_output.parquet")
+    macro = pd.read_parquet("data/curated/macro_scenarios_monthly.parquet")
+
+    perf["snapshot_date"] = perf["snapshot_date"].apply(as_month_end)
+    staging["snapshot_date"] = staging["snapshot_date"].apply(as_month_end)
+    macro["date"] = macro["date"].apply(as_month_end)
+
     perf_asof = perf[perf["snapshot_date"] == asof_dt][["account_id", "balance"]].copy()
+    staging_asof = staging[staging["snapshot_date"] == asof_dt][["account_id", "stage"]].copy()
 
-    stage3_tbl = stage3_workout_table(
+    base = (
+        accounts.merge(perf_asof, on="account_id", how="left")
+        .merge(staging_asof, on="account_id", how="left")
+        .copy()
+    )
+    base["stage"] = base["stage"].fillna(1).astype(int)
+    base["balance"] = base["balance"].fillna(0.0)
+
+    # PD inputs
+    scores_path = Path(f"data/curated/pd_scores_asof_{asof_dt.date().isoformat()}.parquet")
+    anchor_path = Path(f"data/curated/pd_anchor_shift_asof_{asof_dt.date().isoformat()}.parquet")
+
+    if scores_path.exists():
+        sc = pd.read_parquet(scores_path)[["account_id", "pd_12m_hat"]]
+        base = base.merge(sc, on="account_id", how="left")
+    else:
+        base["pd_12m_hat"] = np.nan
+
+    if anchor_path.exists():
+        sh = pd.read_parquet(anchor_path)[["account_id", "pd_anchor_shift"]]
+        base = base.merge(sh, on="account_id", how="left")
+    else:
+        base["pd_anchor_shift"] = 0.0
+
+    # defaults for missing PDs
+    base["pd_12m_hat"] = base["pd_12m_hat"].fillna(0.02).clip(1e-5, 0.5)
+    base["pd_anchor_shift"] = base["pd_anchor_shift"].fillna(0.0)
+
+    # Anchor-adjusted baseline PD (logit shift)
+    pd_anchor = sigmoid(logit(base["pd_12m_hat"].to_numpy(dtype=np.float64)) + base["pd_anchor_shift"].to_numpy(dtype=np.float64))
+    base["pd_12m_anchor"] = pd_anchor
+
+    # Macro setup
+    mz = macro.set_index(["scenario", "date"]).sort_index()
+    scen_list = ["Base", "Upside", "Downside"]
+    future_dates_36 = month_ends_forward(asof_dt, periods=36)
+    future_dates_12 = future_dates_36[:12]
+
+    stress_weights = params.get("stress_weights", {})
+    macro_scale = float(params.get("macro_scale", 0.35))
+    pd_beta = float(params.get("pd_macro_beta", 0.8))
+    h_pd = int(params.get("stress_horizon_months_pd", 12))
+    h_lgd = int(params.get("stress_horizon_months_lgd", 12))
+
+    stress_pd = {s: macro_scale * compute_stress_scalar(mz, s, future_dates_12, stress_weights, h_pd) for s in scen_list}
+    stress_lgd = {s: macro_scale * compute_stress_scalar(mz, s, future_dates_12, stress_weights, h_lgd) for s in scen_list}
+    stress_s3 = {s: macro_scale * compute_stress_scalar(mz, s, future_dates_36, stress_weights, 36) for s in scen_list}
+
+    # Save scenario severity (used in your diagnostics)
+    sev = []
+    for s in scen_list:
+        z = mz.loc[(s, future_dates_12), ["unemployment_z", "gdp_yoy_z", "policy_rate_z"]].to_numpy(dtype=np.float64)
+        sev.append(
+            {
+                "asof_date": asof_dt.date().isoformat(),
+                "scenario": s,
+                "macro_scale": macro_scale,
+                "unemp_z_mean": float(z[:, 0].mean()),
+                "unemp_z_min": float(z[:, 0].min()),
+                "unemp_z_max": float(z[:, 0].max()),
+                "gdp_z_mean": float(z[:, 1].mean()),
+                "gdp_z_min": float(z[:, 1].min()),
+                "gdp_z_max": float(z[:, 1].max()),
+                "rate_z_mean": float(z[:, 2].mean()),
+                "rate_z_min": float(z[:, 2].min()),
+                "rate_z_max": float(z[:, 2].max()),
+                "stress_pd": float(stress_pd[s]),
+                "stress_lgd": float(stress_lgd[s]),
+                "stress_stage3": float(stress_s3[s]),
+            }
+        )
+    Path("data/curated").mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(sev).to_csv(f"data/curated/scenario_severity_asof_{asof_dt.date().isoformat()}.csv", index=False)
+
+    # --- Build scenario PDs ---
+    # logit(PD_scen) = logit(PD_anchor) + pd_beta * stress_pd[scenario]
+    pd_anchor_logit = logit(pd_anchor)
+    pd_12m = {}
+    for s in scen_list:
+        pd_12m[s] = sigmoid(pd_anchor_logit + pd_beta * float(stress_pd[s]))
+
+    # Convert 12m PD to constant monthly hazard (simple but stable)
+    pd_m1 = {s: 1.0 - np.power(1.0 - pd_12m[s], 1.0 / 12.0) for s in scen_list}
+    pd_cum12 = {s: 1.0 - np.power(1.0 - pd_m1[s], 12.0) for s in scen_list}  # ~ pd_12m[s]
+
+    # Lifetime PD via maturity months
+    seg = base["segment"].astype(str).to_numpy()
+    bal = base["balance"].astype(np.float64).to_numpy()
+    lim = base.get("limit_amount", pd.Series(0.0, index=base.index)).fillna(0.0).astype(np.float64).to_numpy()
+    ead = compute_ead(bal, lim, seg, params)
+    mat_m = months_to_maturity(base, asof_dt, params)
+    pd_cumlt = {s: 1.0 - np.power(1.0 - pd_m1[s], mat_m) for s in scen_list}
+    for s in scen_list:
+        pd_cumlt[s] = np.clip(pd_cumlt[s], 0.0, 1.0)
+
+    # --- Scenario LGD for Stage 1/2 ---
+    lgd_base_map = params.get("lgd_base", {})
+    lgd_beta_map = params.get("lgd_scenario_beta", {})
+    lgd_floor = float(params.get("lgd_mult_floor", 0.8))
+    lgd_cap = float(params.get("lgd_mult_cap", 1.6))
+
+    lgd_base = np.array([float(lgd_base_map.get(x, 0.45)) for x in seg], dtype=np.float64)
+    beta = np.array([float(lgd_beta_map.get(x, 0.20)) for x in seg], dtype=np.float64)
+
+    lgd_scen = {}
+    for s in scen_list:
+        mult = np.exp(beta * float(stress_lgd[s]))
+        mult = np.clip(mult, lgd_floor, lgd_cap)
+        lgd_scen[s] = np.clip(lgd_base * mult, 0.01, 0.99)
+
+    # --- Scenario ECL for Stage 1/2 (pre Stage3 override) ---
+    ecl12 = {s: ead * lgd_scen[s] * pd_cum12[s] for s in scen_list}
+    ecllt = {s: ead * lgd_scen[s] * pd_cumlt[s] for s in scen_list}
+
+    # --- Stage 3 override via scenario-linked workout ---
+    scenario_weights = params.get("scenario_weights", {"Base": 0.6, "Upside": 0.2, "Downside": 0.2})
+    stage3_tbl = stage3_workout_table_scenarios(
         asof_dt=asof_dt,
         accounts=accounts,
         perf_asof=perf_asof,
         staging_asof=staging_asof,
         portfolio_params=params,
+        stress_by_scenario=stress_s3,
+        scenario_weights=scenario_weights,
         workout_cfg_path="configs/workout_lgd.yml",
     )
 
+    out = base.copy()
+    out["ead"] = ead
+
+    # add scenario PD columns + scenario LGD columns (for explainability)
+    for s in scen_list:
+        out[f"pd_12m_{s.lower()}"] = pd_cum12[s]
+        out[f"pd_lt_{s.lower()}"] = pd_cumlt[s]
+        out[f"lgd_{s.lower()}"] = lgd_scen[s]
+        out[f"ecl12_{s.lower()}"] = ecl12[s]
+        out[f"ecllt_{s.lower()}"] = ecllt[s]
+
+    # merge stage 3 workout scenario outputs
     if not stage3_tbl.empty:
-        out = out.merge(
-            stage3_tbl[
-                [
-                    "account_id",
-                    "ead_default",
-                    "pv_recoveries",
-                    "workout_lgd",
-                    "ecl_stage3_workout",
-                    "workout_horizon_m",
-                    "workout_total_recovery_assumed",
-                    "workout_half_life_months_assumed",
-                    "workout_collection_cost_assumed",
-                ]
-            ],
-            on="account_id",
-            how="left",
-        )
-
+        out = out.merge(stage3_tbl, on="account_id", how="left")
         stage3 = out["stage"] == 3
-        # override final selected ECL for Stage 3
-        out.loc[stage3, "ecl_selected"] = out.loc[stage3, "ecl_stage3_workout"].astype("float64").to_numpy()
 
-        # for reporting consistency: set scenario/lifetime fields to the same Stage 3 value
-        for c in [
-            "ecl12_base",
-            "ecl12_upside",
-            "ecl12_downside",
-            "ecllt_base",
-            "ecllt_upside",
-            "ecllt_downside",
-            "ecl12_weighted",
-            "ecllt_weighted",
-        ]:
-            if c in out.columns:
-                out.loc[stage3, c] = out.loc[stage3, "ecl_stage3_workout"].astype("float64").to_numpy()
+        # override stage3 scenario ECLs with workout ECLs
+        out.loc[stage3, "ecl12_base"] = out.loc[stage3, "ecl_stage3_base"]
+        out.loc[stage3, "ecl12_upside"] = out.loc[stage3, "ecl_stage3_upside"]
+        out.loc[stage3, "ecl12_downside"] = out.loc[stage3, "ecl_stage3_downside"]
+
+        out.loc[stage3, "ecllt_base"] = out.loc[stage3, "ecl_stage3_base"]
+        out.loc[stage3, "ecllt_upside"] = out.loc[stage3, "ecl_stage3_upside"]
+        out.loc[stage3, "ecllt_downside"] = out.loc[stage3, "ecl_stage3_downside"]
+
+        # also override LGD columns for stage3 to workout lgd by scenario
+        out.loc[stage3, "lgd_base"] = out.loc[stage3, "workout_lgd_base"]
+        out.loc[stage3, "lgd_upside"] = out.loc[stage3, "workout_lgd_upside"]
+        out.loc[stage3, "lgd_downside"] = out.loc[stage3, "workout_lgd_downside"]
+
+    # Ensure the scenario columns exist with your naming convention
+    # (your repo previously used ecl12_base, etc.)
+    if "ecl12_base" not in out.columns:
+        out["ecl12_base"] = out["ecl12_base"]  # no-op
+
+    # scenario weights
+    w_base = float(scenario_weights.get("Base", 0.6))
+    w_up = float(scenario_weights.get("Upside", 0.2))
+    w_dn = float(scenario_weights.get("Downside", 0.2))
+    w_sum = w_base + w_up + w_dn
+    w_base, w_up, w_dn = w_base / w_sum, w_up / w_sum, w_dn / w_sum
+
+    # weighted horizon ECL
+    out["ecl12_weighted"] = w_base * out["ecl12_base"] + w_up * out["ecl12_upside"] + w_dn * out["ecl12_downside"]
+    out["ecllt_weighted"] = w_base * out["ecllt_base"] + w_up * out["ecllt_upside"] + w_dn * out["ecllt_downside"]
+
+    # scenario-selected ECL (apply horizon rule per stage)
+    stage = out["stage"].astype(int)
+    out["ecl_selected_base"] = np.where(stage == 1, out["ecl12_base"], out["ecllt_base"])
+    out["ecl_selected_upside"] = np.where(stage == 1, out["ecl12_upside"], out["ecllt_upside"])
+    out["ecl_selected_downside"] = np.where(stage == 1, out["ecl12_downside"], out["ecllt_downside"])
+    out["ecl_selected_weighted"] = w_base * out["ecl_selected_base"] + w_up * out["ecl_selected_upside"] + w_dn * out["ecl_selected_downside"]
+
+    # final (pre-overlay) selected
+    out["ecl_selected"] = out["ecl_selected_weighted"].astype("float64")
+
+    # PD summary output (your diagnostics file)
+    pd_sum = []
+    for s in scen_list:
+        col = f"pd_12m_{s.lower()}"
+        pd_sum.append(
+            {
+                "asof_date": asof_dt.date().isoformat(),
+                "scenario": s,
+                "n_accounts": int(len(out)),
+                "pd_m1_mean": float(pd_m1[s].mean()),
+                "pd_cum12_mean": float(out[col].mean()),
+                "pd_cum12_p50": float(np.quantile(out[col], 0.50)),
+                "pd_cum12_p90": float(np.quantile(out[col], 0.90)),
+                "pd_cum12_p99": float(np.quantile(out[col], 0.99)),
+                "pd_cum12_max": float(out[col].max()),
+            }
+        )
+    pd.DataFrame(pd_sum).to_csv(f"data/curated/scenario_pd_summary_asof_{asof_dt.date().isoformat()}.csv", index=False)
+
+    return out
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--asof", default=None, help="ASOF date (YYYY-MM-DD). Default = max snapshot in staging_output.")
+    args = ap.parse_args()
+
+    params = load_yml("configs/portfolio_params.yml")
+
+    staging = pd.read_parquet("data/curated/staging_output.parquet")
+    staging["snapshot_date"] = staging["snapshot_date"].apply(as_month_end)
+
+    if args.asof is None:
+        asof_dt = staging["snapshot_date"].max()
     else:
-        # If no stage 3 accounts found, keep existing logic
-        out["ead_default"] = np.nan
-        out["pv_recoveries"] = np.nan
-        out["workout_lgd"] = np.nan
-        out["ecl_stage3_workout"] = np.nan
-        out["workout_horizon_m"] = np.nan
-        out["workout_total_recovery_assumed"] = np.nan
-        out["workout_half_life_months_assumed"] = np.nan
-        out["workout_collection_cost_assumed"] = np.nan
+        asof_dt = as_month_end(args.asof)
 
-    outdir = Path(args.outdir)
-    outdir.mkdir(parents=True, exist_ok=True)
-    out_path = outdir / f"ecl_output_asof_{asof.date().isoformat()}.parquet"
+    out = compute_ecl_asof(asof_dt=asof_dt, params=params)
+
+    out_path = Path(f"data/curated/ecl_output_asof_{asof_dt.date().isoformat()}.parquet")
     out.to_parquet(out_path, index=False)
-
-    # QC prints
     print(f"Wrote: {out_path}")
+
+    # Console summary
     print("\nECL selected totals by stage:")
-    print(out.groupby("stage")["ecl_selected"].sum().round(2))
+    print(out.groupby("stage")["ecl_selected"].sum())
+
     print("\nECL selected totals by segment (top 10):")
-    print(out.groupby("segment")["ecl_selected"].sum().sort_values(ascending=False).head(10).round(2))
+    print(out.groupby("segment")["ecl_selected"].sum().sort_values(ascending=False).head(10))
 
 
 if __name__ == "__main__":
