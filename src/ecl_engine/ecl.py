@@ -28,6 +28,49 @@ def month_ends_forward(asof_dt: pd.Timestamp, periods: int) -> pd.DatetimeIndex:
     return pd.date_range(start=start_me + pd.offsets.MonthEnd(1), periods=periods, freq="ME")
 
 
+def _macro_matrix(
+    mz: pd.DataFrame,
+    scenario: str,
+    dates: pd.DatetimeIndex,
+    cols: list[str],
+) -> np.ndarray:
+    """
+    Safe macro extraction even if dates are missing.
+
+    Strategy:
+      - take scenario slice (date-indexed)
+      - build union index = existing dates U requested dates
+      - forward-fill then back-fill (so future dates beyond max get last known value)
+      - return values on requested dates
+    """
+    # scenario slice: date-indexed frame
+    try:
+        s = mz.xs(scenario, level=0)
+    except KeyError as e:
+        raise KeyError(
+            f"Scenario '{scenario}' not found in macro index. Available: {mz.index.get_level_values(0).unique()}"
+        ) from e
+
+    s = s.sort_index()
+
+    # ensure month-end alignment
+    dates = (pd.to_datetime(dates) + pd.offsets.MonthEnd(0)).to_period("M").to_timestamp("M")
+
+    # build full grid then fill
+    full_idx = s.index.union(dates)
+    grid = s.reindex(full_idx).sort_index()
+    grid[cols] = grid[cols].ffill().bfill()
+
+    # if still NaN (e.g., macro totally empty), fail loudly
+    if grid[cols].isna().any().any():
+        raise ValueError(
+            f"Macro still has NaNs after ffill/bfill for scenario={scenario}. "
+            f"Check macro_scenarios_monthly.parquet generation."
+        )
+
+    return grid.loc[dates, cols].to_numpy(dtype=np.float64)
+
+
 def compute_stress_scalar(
     mz: pd.DataFrame,
     scenario: str,
@@ -36,7 +79,7 @@ def compute_stress_scalar(
     horizon_months: int,
 ) -> float:
     cols = ["unemployment_z", "gdp_yoy_z", "policy_rate_z"]
-    m = mz.loc[(scenario, future_dates), cols].iloc[:horizon_months].to_numpy(dtype=np.float64)
+    m = _macro_matrix(mz, scenario, future_dates, cols)[:horizon_months, :]
     w_u = float(stress_weights.get("unemployment_z", 1.0))
     w_g = float(stress_weights.get("gdp_yoy_z", -0.5))
     w_r = float(stress_weights.get("policy_rate_z", 0.25))
@@ -145,7 +188,8 @@ def compute_ecl_from_frames(
     # Save scenario severity (used in your diagnostics)
     sev = []
     for s in scen_list:
-        z = mz.loc[(s, future_dates_12), ["unemployment_z", "gdp_yoy_z", "policy_rate_z"]].to_numpy(dtype=np.float64)
+        cols = ["unemployment_z", "gdp_yoy_z", "policy_rate_z"]
+        z = _macro_matrix(mz, s, future_dates_12, cols)
         sev.append(
             {
                 "asof_date": asof_dt.date().isoformat(),
