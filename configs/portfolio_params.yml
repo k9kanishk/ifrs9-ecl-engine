@@ -1,23 +1,51 @@
-# simple, transparent “project-level” parameters (replace later with fitted models)
-amort_rate_monthly:
-  Retail_Mortgage: 0.0025
-  Retail_PL: 0.0200
-  SME_TermLoan: 0.0100
-  Corp_TermLoan: 0.0100
-  Revolving: 0.0000
+scenario_weights:
+  Base: 0.6
+  Upside: 0.2
+  Downside: 0.2
 
+# scales the macro signal (you already had 0.35 in your severity file)
+macro_scale: 0.35
+
+# stress index = sum(weight_i * macro_z_i)
+stress_weights:
+  unemployment_z: 1.0
+  gdp_yoy_z: -0.5
+  policy_rate_z: 0.25
+
+stress_horizon_months_pd: 12
+stress_horizon_months_lgd: 12
+
+# PD macro sensitivity applied on logit(PD) (keep it moderate)
+pd_macro_beta: 0.80
+
+# Base LGD for Stage 1/2 (Stage 3 will override via workout)
 lgd_base:
   Retail_Mortgage: 0.20
-  Retail_PL: 0.65
-  SME_TermLoan: 0.45
-  Corp_TermLoan: 0.40
+  Corp_TermLoan: 0.45
+  SME_TermLoan: 0.50
+  Retail_PL: 0.75
   Revolving: 0.80
 
-# CCF only used for revolving exposures
+# Scenario LGD multiplier: lgd_scen = lgd_base * exp(beta * stress)
+# Bigger beta => LGD more sensitive to downside stress
+lgd_scenario_beta:
+  Retail_Mortgage: 0.10
+  Corp_TermLoan: 0.18
+  SME_TermLoan: 0.20
+  Retail_PL: 0.28
+  Revolving: 0.30
+
+lgd_mult_floor: 0.80
+lgd_mult_cap: 1.60
+
+# Revolving EAD
 ccf_base:
   Revolving: 0.75
 
-lgd_scenario_multiplier:
-  Base: 1.00
-  Upside: 0.95
-  Downside: 1.10
+# Used if maturity_date not present in accounts.parquet
+default_maturity_months_by_segment:
+  Retail_Mortgage: 180
+  Corp_TermLoan: 60
+  SME_TermLoan: 48
+  Retail_PL: 36
+  Revolving: 12

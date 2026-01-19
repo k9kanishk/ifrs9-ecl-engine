@@ -43,13 +43,10 @@ def load_latest_outputs():
     exp_path = f"data/curated/account_explain_asof_{asof}.parquet"
     explain = pd.read_parquet(exp_path) if glob.glob(exp_path) else None
 
-    s3_path = f"data/curated/stage3_workout_summary_asof_{asof}.csv"
-    stage3_summary = pd.read_csv(s3_path) if glob.glob(s3_path) else None
-
-    return asof, ecl, ecl_ov, scen, drv, qc, mig, audit, explain, stage3_summary
+    return asof, ecl, ecl_ov, scen, drv, qc, mig, audit, explain
 
 
-asof, ecl, ecl_ov, scen, drv, qc, mig, audit, explain, stage3_summary = load_latest_outputs()
+asof, ecl, ecl_ov, scen, drv, qc, mig, audit, explain = load_latest_outputs()
 
 st.subheader(f"ASOF: {asof}")
 
@@ -193,16 +190,117 @@ st.divider()
 
 # Stage 3 workout summary
 st.markdown("## Stage 3 Workout Summary (Waterfall)")
-if stage3_summary is None:
-    st.info("Stage 3 workout summary not found. Run: python -m ecl_engine.stage3_summary")
+
+asof_str = str(asof.date()) if hasattr(asof, "date") else str(asof)
+path_w = f"data/curated/stage3_workout_summary_asof_{asof_str}.csv"
+path_s = f"data/curated/stage3_workout_summary_scenarios_asof_{asof_str}.csv"
+
+if not os.path.exists(path_w):
+    st.info("Run: python -m ecl_engine.stage3_summary")
 else:
-    s3_view = stage3_summary.copy()
-    for col in ["ead_default_sum", "pv_recoveries_sum", "ecl_sum"]:
-        if col in s3_view.columns:
-            s3_view[col] = s3_view[col].map(lambda x: f"{x:,.2f}")
-    if "implied_lgd" in s3_view.columns:
-        s3_view["implied_lgd"] = s3_view["implied_lgd"].map(lambda x: f"{x:.2%}")
-    st.dataframe(s3_view, use_container_width=True)
+    df_w = pd.read_csv(path_w)
+
+    # Scenario file optional (Phase 5)
+    df_s = pd.read_csv(path_s) if os.path.exists(path_s) else None
+
+    segs = ["All"] + sorted(df_w["segment"].unique().tolist())
+    seg_pick = st.selectbox("Segment (Stage 3)", segs, index=0)
+
+    scen_pick = "Weighted"
+    if df_s is not None:
+        scen_pick = st.selectbox("Scenario view", ["Weighted", "Base", "Upside", "Downside"], index=0)
+
+    def get_vals(seg_name: str):
+        if seg_name == "All":
+            if df_s is None or scen_pick == "Weighted":
+                ead = float(df_w["ead_default_sum"].sum())
+                pv = float(df_w["pv_recoveries_sum"].sum())
+                ecl = float(df_w["ecl_sum"].sum())
+                lgd = 1 - (pv / ead) if ead > 0 else 0.0
+                return ead, pv, ecl, lgd
+
+            # scenario
+            tmp = df_s.copy()
+        else:
+            if df_s is None or scen_pick == "Weighted":
+                tmp = df_w[df_w["segment"] == seg_name]
+                ead = float(tmp["ead_default_sum"].iloc[0])
+                pv = float(tmp["pv_recoveries_sum"].iloc[0])
+                ecl = float(tmp["ecl_sum"].iloc[0])
+                lgd = float(tmp["implied_lgd"].iloc[0])
+                return ead, pv, ecl, lgd
+
+            tmp = df_s[df_s["segment"] == seg_name]
+
+        # scenario values from df_s
+        if seg_name == "All":
+            ead = float(tmp["ead_default_sum"].sum())
+            if scen_pick == "Base":
+                pv = float(tmp["pv_base"].sum())
+                ecl = float(tmp["ecl_base"].sum())
+                lgd = float((tmp["lgd_base"] * tmp["ead_default_sum"]).sum() / ead)
+            elif scen_pick == "Upside":
+                pv = float(tmp["pv_up"].sum())
+                ecl = float(tmp["ecl_up"].sum())
+                lgd = float((tmp["lgd_up"] * tmp["ead_default_sum"]).sum() / ead)
+            elif scen_pick == "Downside":
+                pv = float(tmp["pv_dn"].sum())
+                ecl = float(tmp["ecl_dn"].sum())
+                lgd = float((tmp["lgd_dn"] * tmp["ead_default_sum"]).sum() / ead)
+            else:
+                pv = float(tmp["pv_w"].sum())
+                ecl = float(tmp["ecl_w"].sum())
+                lgd = float((tmp["lgd_w"] * tmp["ead_default_sum"]).sum() / ead)
+            return ead, pv, ecl, lgd
+
+        row = tmp.iloc[0]
+        ead = float(row["ead_default_sum"])
+        if scen_pick == "Base":
+            pv = float(row["pv_base"])
+            ecl = float(row["ecl_base"])
+            lgd = float(row["lgd_base"])
+        elif scen_pick == "Upside":
+            pv = float(row["pv_up"])
+            ecl = float(row["ecl_up"])
+            lgd = float(row["lgd_up"])
+        elif scen_pick == "Downside":
+            pv = float(row["pv_dn"])
+            ecl = float(row["ecl_dn"])
+            lgd = float(row["lgd_dn"])
+        else:
+            pv = float(row["pv_w"])
+            ecl = float(row["ecl_w"])
+            lgd = float(row["lgd_w"])
+        return ead, pv, ecl, lgd
+
+    ead, pv, ecl, lgd = get_vals(seg_pick)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Stage 3 EAD@Default", f"{ead:,.2f}")
+    c2.metric("PV Recoveries", f"{pv:,.2f}")
+    c3.metric("Stage 3 ECL", f"{ecl:,.2f}")
+    c4.metric("Implied Workout LGD", f"{lgd:.2%}")
+
+    title = f"Stage 3 Waterfall — {seg_pick} — {scen_pick}"
+    fig = go.Figure(
+        go.Waterfall(
+            name="Stage3",
+            orientation="v",
+            measure=["absolute", "relative", "total"],
+            x=["EAD@Default", "PV Recoveries", "ECL"],
+            y=[ead, -pv, ecl],
+            text=[f"{ead:,.0f}", f"{pv:,.0f}", f"{ecl:,.0f}"],
+            textposition="outside",
+        )
+    )
+    fig.update_layout(title=title, showlegend=False, waterfallgap=0.3, margin=dict(l=10, r=10, t=50, b=10))
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("### Table")
+    st.dataframe(df_w, use_container_width=True)
+    if df_s is not None:
+        st.markdown("### Scenario table (Phase 5)")
+        st.dataframe(df_s, use_container_width=True)
 
 st.divider()
 
