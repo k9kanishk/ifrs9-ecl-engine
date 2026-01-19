@@ -6,12 +6,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ecl_engine.ecl import (
-    _logit,
-    _sigmoid,
-    month_end_index,
-    prepare_macro_z_all_scenarios,
-)
+from ecl_engine.ecl import prepare_macro_z_all_scenarios
+from ecl_engine.utils.dates import month_end_index
+from ecl_engine.utils.math import logit, sigmoid
 from ecl_engine.utils.io import load_yml
 
 
@@ -38,7 +35,7 @@ def cum_pd12_from_shift(
     z = (logit_ttc[:, None] + shift[:, None] + macro_linear[None, :]).astype(
         np.float64
     )  # (N,12)
-    pd_annual = np.clip(_sigmoid(z), pd_floor, pd_cap)  # (N,12)
+    pd_annual = np.clip(sigmoid(z), pd_floor, pd_cap)  # (N,12)
     h = 1.0 - np.power(1.0 - pd_annual, 1.0 / 12.0)  # monthly hazard
     cum = 1.0 - np.prod(1.0 - h, axis=1)
     return cum
@@ -91,7 +88,7 @@ def compute_anchor_shift(
     target = np.clip(target, 1e-6, 0.999)
 
     ttc = np.clip(a["ttc_pd_annual"].astype(float).to_numpy(), 1e-6, 0.999)
-    logit_ttc = _logit(ttc).astype(np.float64)
+    logit_ttc = logit(ttc).astype(np.float64)
 
     future_dates = month_end_index((asof_dt + pd.offsets.MonthEnd(0)).normalize(), 12)
     mz_base = mz.xs("Base", level=0).sort_index()

@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
-from ecl_engine.ecl import compute_ecl_asof
+from ecl_engine.ecl import compute_ecl_from_frames
 from ecl_engine.utils.io import load_yml
 from ecl_engine.overlay import apply_overlays
 
@@ -91,7 +91,7 @@ def run_decomposition(
     asof_dt = pd.to_datetime(asof) if asof else staged["snapshot_date"].max()
 
     # Base run (with your current params)
-    base = compute_ecl_asof(staged, accounts, macro, policy, weights, params, asof_dt)
+    base = compute_ecl_from_frames(staged, accounts, macro, params, asof_dt, policy, weights)
     base_ov = apply_overlays(base, overlays_path)
 
     # Scenario contribution (pre-overlay, because overlay is not scenario-specific)
@@ -101,7 +101,7 @@ def run_decomposition(
     # 1) PD effect: force all scenarios to use Base macro (i.e., remove scenario variation)
     # Implemented by setting weights 100% Base (keeps PIT level but kills scenario weighting).
     w_pd = {"weights": {"Base": 1.0, "Upside": 0.0, "Downside": 0.0}}
-    pd_only = compute_ecl_asof(staged, accounts, macro, policy, w_pd, params, asof_dt)
+    pd_only = compute_ecl_from_frames(staged, accounts, macro, params, asof_dt, policy, w_pd)
     pd_only_ov = apply_overlays(pd_only, overlays_path)
 
     # 2) LGD effect: set scenario multipliers to 1 across scenarios
@@ -111,16 +111,16 @@ def run_decomposition(
         "Upside": 1.0,
         "Downside": 1.0,
     }
-    lgd_flat = compute_ecl_asof(
-        staged, accounts, macro, policy, weights, params_lgd_flat, asof_dt
+    lgd_flat = compute_ecl_from_frames(
+        staged, accounts, macro, params_lgd_flat, asof_dt, policy, weights
     )
     lgd_flat_ov = apply_overlays(lgd_flat, overlays_path)
 
     # 3) EAD effect (revolving): set CCF to 0 (so EAD = balance for revolving)
     params_ccf0 = yaml.safe_load(yaml.safe_dump(params))
     params_ccf0["ccf_base"] = {"Revolving": 0.0}
-    ccf0 = compute_ecl_asof(
-        staged, accounts, macro, policy, weights, params_ccf0, asof_dt
+    ccf0 = compute_ecl_from_frames(
+        staged, accounts, macro, params_ccf0, asof_dt, policy, weights
     )
     ccf0_ov = apply_overlays(ccf0, overlays_path)
 

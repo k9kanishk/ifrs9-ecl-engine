@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 from ecl_engine.models.lgd_workout import stage3_workout_table_scenarios
 from ecl_engine.utils.io import load_yml
+from ecl_engine.utils.macro import normalize_macro_z_columns
 
 
 def as_month_end(x) -> pd.Timestamp:
@@ -69,27 +70,38 @@ def compute_ead(balance: np.ndarray, limit_amount: np.ndarray, segment: np.ndarr
     return np.maximum(ead, 0.0)
 
 
-def compute_ecl_asof(asof_dt: pd.Timestamp, params: dict) -> pd.DataFrame:
-    # --- Load curated inputs ---
-    accounts = pd.read_parquet("data/curated/accounts.parquet")
-    perf = pd.read_parquet("data/curated/performance_monthly.parquet")
-    staging = pd.read_parquet("data/curated/staging_output.parquet")
-    macro = pd.read_parquet("data/curated/macro_scenarios_monthly.parquet")
+def compute_ecl_from_frames(
+    staged: pd.DataFrame,
+    accounts: pd.DataFrame,
+    macro: pd.DataFrame,
+    params: dict,
+    asof_dt: pd.Timestamp,
+    policy: dict | None = None,
+    scenario_weights: dict | None = None,
+) -> pd.DataFrame:
+    """
+    Core ECL computation using provided dataframes.
+    Used by driver_decomp / explain / tests.
+    """
+    staged = staged.copy()
+    accounts = accounts.copy()
+    macro = macro.copy()
 
-    perf["snapshot_date"] = perf["snapshot_date"].apply(as_month_end)
-    staging["snapshot_date"] = staging["snapshot_date"].apply(as_month_end)
+    staged["snapshot_date"] = staged["snapshot_date"].apply(as_month_end)
     macro["date"] = macro["date"].apply(as_month_end)
+    macro = normalize_macro_z_columns(macro)
 
-    perf_asof = perf[perf["snapshot_date"] == asof_dt][["account_id", "balance"]].copy()
-    staging_asof = staging[staging["snapshot_date"] == asof_dt][["account_id", "stage"]].copy()
+    asof_dt = as_month_end(asof_dt)
+    staging_asof = staged[staged["snapshot_date"] == asof_dt][["account_id", "stage"]].copy()
 
-    base = (
-        accounts.merge(perf_asof, on="account_id", how="left")
-        .merge(staging_asof, on="account_id", how="left")
-        .copy()
-    )
+    base = accounts.copy()
+    if "balance" not in base.columns and "balance" in staged.columns:
+        bal_asof = staged[staged["snapshot_date"] == asof_dt][["account_id", "balance"]].copy()
+        base = base.merge(bal_asof, on="account_id", how="left")
+
+    base = base.merge(staging_asof, on="account_id", how="left").copy()
     base["stage"] = base["stage"].fillna(1).astype(int)
-    base["balance"] = base["balance"].fillna(0.0)
+    base["balance"] = base.get("balance", pd.Series(0.0, index=base.index)).fillna(0.0)
 
     # PD inputs
     scores_path = Path(f"data/curated/pd_scores_asof_{asof_dt.date().isoformat()}.parquet")
@@ -198,15 +210,17 @@ def compute_ecl_asof(asof_dt: pd.Timestamp, params: dict) -> pd.DataFrame:
     ecllt = {s: ead * lgd_scen[s] * pd_cumlt[s] for s in scen_list}
 
     # --- Stage 3 override via scenario-linked workout ---
-    scenario_weights = params.get("scenario_weights", {"Base": 0.6, "Upside": 0.2, "Downside": 0.2})
+    if scenario_weights is None:
+        scenario_weights = params.get("scenario_weights", {"Base": 0.6, "Upside": 0.2, "Downside": 0.2})
+    weight_map = scenario_weights.get("weights", scenario_weights)
     stage3_tbl = stage3_workout_table_scenarios(
         asof_dt=asof_dt,
         accounts=accounts,
-        perf_asof=perf_asof,
+        perf_asof=base[["account_id", "balance"]].copy(),
         staging_asof=staging_asof,
         portfolio_params=params,
         stress_by_scenario=stress_s3,
-        scenario_weights=scenario_weights,
+        scenario_weights=weight_map,
         workout_cfg_path="configs/workout_lgd.yml",
     )
 
@@ -246,9 +260,9 @@ def compute_ecl_asof(asof_dt: pd.Timestamp, params: dict) -> pd.DataFrame:
         out["ecl12_base"] = out["ecl12_base"]  # no-op
 
     # scenario weights
-    w_base = float(scenario_weights.get("Base", 0.6))
-    w_up = float(scenario_weights.get("Upside", 0.2))
-    w_dn = float(scenario_weights.get("Downside", 0.2))
+    w_base = float(weight_map.get("Base", 0.6))
+    w_up = float(weight_map.get("Upside", 0.2))
+    w_dn = float(weight_map.get("Downside", 0.2))
     w_sum = w_base + w_up + w_dn
     w_base, w_up, w_dn = w_base / w_sum, w_up / w_sum, w_dn / w_sum
 
@@ -286,6 +300,28 @@ def compute_ecl_asof(asof_dt: pd.Timestamp, params: dict) -> pd.DataFrame:
     pd.DataFrame(pd_sum).to_csv(f"data/curated/scenario_pd_summary_asof_{asof_dt.date().isoformat()}.csv", index=False)
 
     return out
+
+
+def compute_ecl_asof(asof_dt: pd.Timestamp, params: dict) -> pd.DataFrame:
+    # --- Load curated inputs ---
+    asof_dt = as_month_end(asof_dt)
+    accounts = pd.read_parquet("data/curated/accounts.parquet")
+    perf = pd.read_parquet("data/curated/performance_monthly.parquet")
+    staging = pd.read_parquet("data/curated/staging_output.parquet")
+    macro = pd.read_parquet("data/curated/macro_scenarios_monthly.parquet")
+
+    perf["snapshot_date"] = perf["snapshot_date"].apply(as_month_end)
+    perf_asof = perf[perf["snapshot_date"] == asof_dt][["account_id", "balance"]].copy()
+
+    accounts = accounts.merge(perf_asof, on="account_id", how="left")
+
+    return compute_ecl_from_frames(
+        staged=staging,
+        accounts=accounts,
+        macro=macro,
+        params=params,
+        asof_dt=asof_dt,
+    )
 
 
 def main():

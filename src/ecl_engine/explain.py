@@ -9,7 +9,9 @@ import pandas as pd
 import yaml
 
 # Reuse ECL helpers where possible
-from ecl_engine.ecl import month_end_index, prepare_macro_z_all_scenarios, _logit, _sigmoid
+from ecl_engine.ecl import prepare_macro_z_all_scenarios
+from ecl_engine.utils.dates import month_end_index
+from ecl_engine.utils.math import logit, sigmoid
 from ecl_engine.utils.io import load_yml
 
 
@@ -201,8 +203,8 @@ def build_account_explain(
             + float(betas["policy_rate_z"]) * m[:, 2]
         ).astype(np.float64)[None, :]  # (1,12)
 
-        logit_ttc = _logit(np.clip(ttc_pd, 1e-12, 1 - 1e-12)).astype(np.float64)[:, None]
-        pd_annual = np.clip(_sigmoid(logit_ttc + x), pd_floor, pd_cap).astype(np.float64)  # (n,12)
+        logit_ttc = logit(np.clip(ttc_pd, 1e-12, 1 - 1e-12)).astype(np.float64)[:, None]
+        pd_annual = np.clip(sigmoid(logit_ttc + x), pd_floor, pd_cap).astype(np.float64)  # (n,12)
 
         # Convert annual PD to monthly hazard
         h = 1.0 - np.power((1.0 - pd_annual), 1.0 / 12.0)
