@@ -69,18 +69,29 @@ def main() -> None:
     )
 
     # derived fields
-    out["maturity_date"] = pd.to_datetime(out.get("maturity_date"), errors="coerce")
-    out["months_to_maturity"] = (
-        (out["maturity_date"].dt.to_period("M") - asof_dt.to_period("M"))
-        .apply(lambda x: x.n if pd.notna(x) else np.nan)
-        .astype("float64")
-    )
+    # ---- maturity / months-to-maturity (robust) ----
+    if "maturity_date" in out.columns:
+        # force datetime; utc=False keeps naive timestamps consistent
+        out["maturity_date"] = pd.to_datetime(out["maturity_date"], errors="coerce")
 
-    out["utilization"] = np.where(
-        (out.get("limit_amount").fillna(0.0) > 0),
-        out.get("balance").fillna(0.0) / out.get("limit_amount").replace(0.0, np.nan),
-        np.nan,
-    )
+        # some merges can leave dtype as object even after to_datetime if column is all-NaT;
+        # protect dt usage by building from the Series directly
+        md = pd.to_datetime(out["maturity_date"], errors="coerce")
+
+        # months difference in Period space (safe even with NaT)
+        md_p = md.dt.to_period("M")
+        asof_p = pd.Period(asof_dt, freq="M")
+        out["months_to_maturity"] = (md_p - asof_p).apply(lambda x: x.n if pd.notna(x) else np.nan).astype("float64")
+    else:
+        out["maturity_date"] = pd.NaT
+        out["months_to_maturity"] = np.nan
+
+    bal = out["balance"] if "balance" in out.columns else 0.0
+    lim = out["limit_amount"] if "limit_amount" in out.columns else 0.0
+    bal = pd.to_numeric(bal, errors="coerce").fillna(0.0)
+    lim = pd.to_numeric(lim, errors="coerce").fillna(0.0)
+
+    out["utilization"] = np.where(lim > 0, bal / np.where(lim > 0, lim, np.nan), np.nan)
 
     out["ead_rule"] = np.where(out.get("segment").astype(str) == "Revolving", "Balance + CCF * Undrawn", "Balance")
     if "ead" in out.columns:
