@@ -3,8 +3,17 @@ default:
   sicr_dpd_backstop: 30
   stage3_if_default_flag: true
 
-  pd_floor: 0.000001
-  pd_cap: 0.999
+  # PIT PD caps used in staging PIT engine
+  pd_floor: 1.0e-5
+  pd_cap: 0.50
+
+  # Low credit risk exemption (IFRS 9 concept)
+  use_lcr_exemption: true
+  lcr_pd_threshold_default: 0.01   # 1% annual PIT PD (fallback)
+
+  # Optional qualitative trigger in perf_monthly (0/1)
+  use_watchlist_flag: true
+  watchlist_column: watchlist_flag
 
   macro_scale: 0.35
 
@@ -17,7 +26,32 @@ default:
 
 sicr_pd_ratio_threshold:
   Retail_Mortgage: 2.0
-  Retail_PL: 2.0
-  Revolving: 2.25
+  Retail_PL: 1.8
+  Revolving: 1.6
   SME_TermLoan: 1.7
-  Corp_TermLoan: 1.5
+  Corp_TermLoan: 1.7
+  default: 2.0
+
+sicr_pd_abs_threshold:
+  Retail_Mortgage: 0.003   # +30bp
+  Retail_PL: 0.010         # +100bp
+  Revolving: 0.012
+  SME_TermLoan: 0.008
+  Corp_TermLoan: 0.006
+  default: 0.010
+
+lcr_pd_threshold:
+  Retail_Mortgage: 0.005   # 0.5%
+  Corp_TermLoan: 0.010
+  SME_TermLoan: 0.010
+  Retail_PL: 0.015
+  Revolving: 0.020
+
+cure:
+  stage2_to_1_months: 3
+  stage3_to_2_months: 6
+
+  # Must be "performing enough" during cure window:
+  dpd_below_for_cure: 30
+  require_watchlist_clear: true
+  require_no_default_flag_for_stage3_cure: true

@@ -159,59 +159,195 @@ def assign_stage(
     sicr_dpd = int(policy["default"]["sicr_dpd_backstop"])
     use_default_flag = bool(policy["default"]["stage3_if_default_flag"])
 
-    thr_map = policy["sicr_pd_ratio_threshold"]
+    thr_ratio_map = policy.get("sicr_pd_ratio_threshold", {})
+    thr_abs_map = policy.get("sicr_pd_abs_threshold", {})
+
+    use_lcr = bool(policy["default"].get("use_lcr_exemption", True))
+    lcr_default = float(policy["default"].get("lcr_pd_threshold_default", 0.01))
+    lcr_map = policy.get("lcr_pd_threshold", {})
+
+    use_watchlist = bool(policy["default"].get("use_watchlist_flag", False))
+    watchlist_col = str(policy["default"].get("watchlist_column", "watchlist_flag"))
+
+    cure_cfg = policy.get("cure", {})
+    cure_s2_to_s1 = int(cure_cfg.get("stage2_to_1_months", 3))
+    cure_s3_to_s2 = int(cure_cfg.get("stage3_to_2_months", 6))
+    cure_dpd_below = int(cure_cfg.get("dpd_below_for_cure", 30))
+    cure_watch_clear = bool(cure_cfg.get("require_watchlist_clear", True))
+    cure_s3_no_default = bool(
+        cure_cfg.get("require_no_default_flag_for_stage3_cure", True)
+    )
 
     acc = accounts[["account_id", "segment"]].copy()
     df = perf.copy()
     df["snapshot_date"] = pd.to_datetime(df["snapshot_date"])
 
-    df = df.merge(acc, on="account_id", how="left").merge(
-        pd_panel, on=["snapshot_date", "account_id"], how="left"
+    df = (
+        df.merge(acc, on="account_id", how="left")
+        .merge(pd_panel, on=["snapshot_date", "account_id"], how="left")
     )
 
-    # Segment-specific thresholds (default fallback)
+    # thresholds
     df["sicr_pd_ratio_threshold"] = (
-        df["segment"].map(thr_map).fillna(2.0).astype(float)
+        df["segment"]
+        .map(thr_ratio_map)
+        .fillna(thr_ratio_map.get("default", 2.0))
+        .astype(float)
+    )
+    df["sicr_pd_abs_threshold"] = (
+        df["segment"]
+        .map(thr_abs_map)
+        .fillna(thr_abs_map.get("default", 0.01))
+        .astype(float)
+    )
+    df["lcr_pd_threshold"] = (
+        df["segment"].map(lcr_map).fillna(lcr_default).astype(float)
     )
 
-    # Flags
-    df["stage3_flag"] = df["dpd"].astype(int) >= default_dpd
-    if use_default_flag and "default_flag" in df.columns:
-        df["stage3_flag"] = df["stage3_flag"] | (
-            df["default_flag"].astype(int) == 1
+    # ensure core fields exist
+    df["dpd"] = pd.to_numeric(df.get("dpd", 0), errors="coerce").fillna(0).astype(int)
+    if "default_flag" in df.columns:
+        df["default_flag"] = (
+            pd.to_numeric(df["default_flag"], errors="coerce").fillna(0).astype(int)
         )
+    else:
+        df["default_flag"] = 0
 
-    df["sicr_flag_dpd"] = (df["dpd"].astype(int) >= sicr_dpd) & (
+    # SICR PD measures
+    df["pd_pit"] = pd.to_numeric(df["pd_pit"], errors="coerce")
+    df["pd_pit_orig"] = pd.to_numeric(df["pd_pit_orig"], errors="coerce")
+
+    # fallback if missing (should be rare)
+    df["pd_pit"] = df["pd_pit"].fillna(0.02)
+    df["pd_pit_orig"] = df["pd_pit_orig"].fillna(0.02)
+
+    df["pd_delta"] = df["pd_pit"] - df["pd_pit_orig"]
+    df["pd_ratio"] = df["pd_pit"] / np.clip(df["pd_pit_orig"], 1e-12, None)
+
+    # Stage 3 flag
+    df["stage3_flag"] = df["dpd"] >= default_dpd
+    if use_default_flag:
+        df["stage3_flag"] = df["stage3_flag"] | (df["default_flag"] == 1)
+
+    # SICR triggers (Stage 2) — only if not Stage 3
+    df["sicr_flag_dpd"] = (df["dpd"] >= sicr_dpd) & (~df["stage3_flag"])
+    df["sicr_flag_pd_ratio"] = (
+        df["pd_ratio"] >= df["sicr_pd_ratio_threshold"]
+    ) & (~df["stage3_flag"])
+    df["sicr_flag_pd_abs"] = (df["pd_delta"] >= df["sicr_pd_abs_threshold"]) & (
         ~df["stage3_flag"]
     )
-    df["sicr_flag_pd"] = (
-        df["pd_ratio"].astype(float) >= df["sicr_pd_ratio_threshold"]
-    ) & (~df["stage3_flag"])
 
-    # Stage assignment
-    df["stage"] = 1
-    df.loc[df["sicr_flag_dpd"] | df["sicr_flag_pd"], "stage"] = 2
-    df.loc[df["stage3_flag"], "stage"] = 3
+    # Optional qualitative trigger
+    if use_watchlist and watchlist_col in df.columns:
+        df["watchlist_flag"] = (
+            pd.to_numeric(df[watchlist_col], errors="coerce").fillna(0).astype(int)
+        )
+    else:
+        df["watchlist_flag"] = 0
+    df["sicr_flag_watchlist"] = (df["watchlist_flag"] == 1) & (~df["stage3_flag"])
 
-    # Reason string (auditable)
-    reason = np.where(
-        df["stage"] == 3,
-        "Stage3: Default/90+ DPD",
-        np.where(
-            df["stage"] == 2,
-            np.where(
-                df["sicr_flag_dpd"] & df["sicr_flag_pd"],
-                "Stage2: SICR (DPD>=30 + PD deterioration)",
-                np.where(
-                    df["sicr_flag_dpd"],
-                    "Stage2: SICR (DPD>=30 backstop)",
-                    "Stage2: SICR (PD deterioration)",
-                ),
-            ),
-            "Stage1",
-        ),
+    # Combine SICR
+    df["sicr_flag_pd"] = df["sicr_flag_pd_ratio"] | df["sicr_flag_pd_abs"]
+    df["sicr_flag"] = (
+        df["sicr_flag_dpd"] | df["sicr_flag_pd"] | df["sicr_flag_watchlist"]
     )
-    df["stage_reason"] = reason
+
+    # Low credit risk exemption (only applies to potential Stage 2, never Stage 3)
+    df["lcr_flag"] = False
+    if use_lcr:
+        df["lcr_flag"] = (
+            (df["pd_pit"] <= df["lcr_pd_threshold"])
+            & (df["dpd"] < sicr_dpd)
+            & (~df["stage3_flag"])
+        )
+
+    # Raw stage
+    df["stage_raw"] = 1
+    df.loc[df["sicr_flag"] & (~df["lcr_flag"]), "stage_raw"] = 2
+    df.loc[df["stage3_flag"], "stage_raw"] = 3
+
+    # Apply cure / probation per account
+    df = df.sort_values(["account_id", "snapshot_date"]).reset_index(drop=True)
+
+    stages = []
+    reasons = []
+
+    for acc_id, g in df.groupby("account_id", sort=False):
+        cur_stage = 1
+        good_s2 = 0
+        good_s3 = 0
+
+        for _, r in g.iterrows():
+            raw = int(r["stage_raw"])
+
+            # determine “good” conditions for cure
+            watch_ok = (int(r["watchlist_flag"]) == 0) if cure_watch_clear else True
+            dpd_ok = int(r["dpd"]) < cure_dpd_below
+
+            s3_default_ok = True
+            if cure_s3_no_default:
+                s3_default_ok = (int(r["default_flag"]) == 0)
+
+            # State machine
+            if cur_stage == 3:
+                if raw < 3 and dpd_ok and watch_ok and s3_default_ok:
+                    good_s3 += 1
+                    if good_s3 >= cure_s3_to_s2:
+                        cur_stage = 2 if raw == 2 else 1
+                        good_s3 = 0
+                else:
+                    good_s3 = 0
+                    cur_stage = 3  # stays 3
+
+            elif cur_stage == 2:
+                if raw == 1 and dpd_ok and watch_ok:
+                    good_s2 += 1
+                    if good_s2 >= cure_s2_to_s1:
+                        cur_stage = 1
+                        good_s2 = 0
+                else:
+                    good_s2 = 0
+                    cur_stage = 3 if raw == 3 else 2
+
+            else:  # cur_stage == 1
+                cur_stage = 3 if raw == 3 else (2 if raw == 2 else 1)
+                good_s2 = 0
+                good_s3 = 0
+
+            stages.append(cur_stage)
+
+            # Reason string (auditable)
+            if cur_stage == 3:
+                reasons.append("Stage3: Default/90+ DPD (credit-impaired)")
+            elif cur_stage == 2:
+                if raw == 1:
+                    reasons.append("Stage2: SICR (cure probation)")
+                elif r["sicr_flag_watchlist"]:
+                    reasons.append("Stage2: SICR (watchlist/qualitative)")
+                elif r["sicr_flag_dpd"] and r["sicr_flag_pd"]:
+                    reasons.append("Stage2: SICR (DPD>=30 + PD deterioration)")
+                elif r["sicr_flag_dpd"]:
+                    reasons.append("Stage2: SICR (DPD>=30 backstop)")
+                elif r["sicr_flag_pd_abs"] and r["sicr_flag_pd_ratio"]:
+                    reasons.append("Stage2: SICR (PD abs + ratio)")
+                elif r["sicr_flag_pd_abs"]:
+                    reasons.append("Stage2: SICR (PD absolute deterioration)")
+                else:
+                    reasons.append("Stage2: SICR (PD ratio deterioration)")
+            else:
+                if r["lcr_flag"] and raw == 2:
+                    reasons.append("Stage1: Low credit risk exemption (LCR)")
+                else:
+                    reasons.append("Stage1")
+
+        # end for rows
+
+    df["stage"] = stages
+    df["stage_reason"] = reasons
+
+    # Keep key audit flags for dashboard/validation
+    keep = df.columns.tolist()
 
     return df
 
