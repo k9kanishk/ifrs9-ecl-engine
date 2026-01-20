@@ -86,12 +86,22 @@ def main() -> None:
         out["maturity_date"] = pd.NaT
         out["months_to_maturity"] = np.nan
 
-    bal = out["balance"] if "balance" in out.columns else 0.0
-    lim = out["limit_amount"] if "limit_amount" in out.columns else 0.0
-    bal = pd.to_numeric(bal, errors="coerce").fillna(0.0)
-    lim = pd.to_numeric(lim, errors="coerce").fillna(0.0)
+    # ---- utilization (robust even if columns missing) ----
+    if "balance" in out.columns:
+        bal = out["balance"]
+    else:
+        bal = pd.Series(0.0, index=out.index)
 
-    out["utilization"] = np.where(lim > 0, bal / np.where(lim > 0, lim, np.nan), np.nan)
+    if "limit_amount" in out.columns:
+        lim = out["limit_amount"]
+    else:
+        lim = pd.Series(0.0, index=out.index)
+
+    bal = pd.to_numeric(bal, errors="coerce").fillna(0.0).astype("float64")
+    lim = pd.to_numeric(lim, errors="coerce").fillna(0.0).astype("float64")
+
+    # utilization only meaningful when limit > 0
+    out["utilization"] = np.where(lim > 0, bal / lim.replace(0.0, np.nan), np.nan)
 
     out["ead_rule"] = np.where(out.get("segment").astype(str) == "Revolving", "Balance + CCF * Undrawn", "Balance")
     if "ead" in out.columns:
