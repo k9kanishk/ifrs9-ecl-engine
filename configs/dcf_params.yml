@@ -1,0 +1,18 @@
+dcf:
+  # Maximum monthly projection horizon used for DCF integration.
+  # For a retail-ish demo you can keep 120, for corp you can set 360.
+  horizon_months: 360
+
+  # If an account has missing/invalid EIR, use this annual discount rate.
+  eir_fallback_annual: 0.05
+
+  # Stage 1 uses 12-month horizon (IFRS 9 rule)
+  stage1_horizon_months: 12
+
+  # Optional EAD decay half-life in months (0 = flat EAD curve).
+  # Use this if you want a DCF-style amortization proxy without a schedule table.
+  ead_decay_half_life_m: 0.0
+
+  # Clamp discount rate
+  min_eir_annual: -0.50
+  max_eir_annual: 2.00
