@@ -36,7 +36,7 @@ def stage3_workout_table_scenarios(
 
     Returns account-level columns:
       - ead_default
-      - pv_recoveries_{Base/Upside/Downside}, workout_lgd_{...}, ecl_stage3_{...}
+      - pv_recoveries_{base/upside/downside}, workout_lgd_{base/upside/downside}, ecl_stage3_{base/upside/downside}
       - pv_recoveries (weighted), workout_lgd (weighted), ecl_stage3_workout (weighted)
       - audit fields: workout_total_recovery_assumed, workout_half_life_months_assumed, workout_collection_cost_assumed
     """
@@ -118,9 +118,7 @@ def stage3_workout_table_scenarios(
             pv[i] = float(np.sum(rec_cf * DF[i, :]))
 
         pv = np.minimum(pv, ead)
-        ratio = np.zeros_like(pv, dtype=np.float64)
-        np.divide(pv, ead, out=ratio, where=ead > 0)
-        lgd = 1.0 - ratio
+        lgd = 1.0 - np.where(ead > 0, pv / ead, 0.0)
         lgd = np.clip(lgd, 0.0, 1.0)
         ecl = ead * lgd
         return pv, lgd, ecl
@@ -152,10 +150,7 @@ def stage3_workout_table_scenarios(
     w_base, w_up, w_dn = w_base / w_sum, w_up / w_sum, w_dn / w_sum
 
     out["pv_recoveries"] = w_base * pv_s["Base"] + w_up * pv_s["Upside"] + w_dn * pv_s["Downside"]
-    pvw = out["pv_recoveries"].to_numpy(dtype=np.float64)
-    ratio_w = np.zeros(len(out), dtype=np.float64)
-    np.divide(out["pv_recoveries"].to_numpy(dtype=np.float64), ead, out=ratio_w, where=ead > 0)
-    out["workout_lgd"] = np.clip(1.0 - ratio_w, 0.0, 1.0)
+    out["workout_lgd"] = np.clip(1.0 - np.where(ead > 0, out["pv_recoveries"].to_numpy() / ead, 0.0), 0.0, 1.0)
     out["ecl_stage3_workout"] = w_base * ecl_s["Base"] + w_up * ecl_s["Upside"] + w_dn * ecl_s["Downside"]
 
     # audit baseline assumptions
