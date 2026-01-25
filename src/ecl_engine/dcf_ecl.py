@@ -147,6 +147,11 @@ def compute_dcf_ecl_for_accounts(
     # Prefer an explicit 'ead' if present; else compute from balance + limit_amount if present; else use balance.
     if "ead" in df.columns:
         ead0 = _to_float(df["ead"], default=0.0)
+
+        # Stage 3 is defaulted exposure: prefer ead_default if present
+        if "ead_default" in df.columns:
+            ead_def = _to_float(df["ead_default"], default=0.0)
+            ead0 = np.where(stage == 3, ead_def, ead0)
     else:
         bal = _to_float(df.get("balance", 0.0), default=0.0)
         lim = df.get("limit_amount", 0.0)
@@ -232,6 +237,31 @@ def compute_dcf_ecl_for_accounts(
         df[f"dcf_hazard_{s.lower()}"] = h
         df[f"dcf_ecl12_{s.lower()}"] = ecl12_s
         df[f"dcf_ecllt_{s.lower()}"] = ecllt_s
+
+    # ----------------------------
+    # Stage 3 override (critical)
+    # ----------------------------
+    s3 = stage == 3
+    have_stage3_scen = all(
+        c in df.columns
+        for c in ["ecl_stage3_base", "ecl_stage3_upside", "ecl_stage3_downside"]
+    )
+
+    if s3.any() and have_stage3_scen:
+        # Force DCF scenario ECLs to match workout scenario ECLs for Stage 3
+        df.loc[s3, "dcf_ecl12_base"] = df.loc[s3, "ecl_stage3_base"]
+        df.loc[s3, "dcf_ecllt_base"] = df.loc[s3, "ecl_stage3_base"]
+
+        df.loc[s3, "dcf_ecl12_upside"] = df.loc[s3, "ecl_stage3_upside"]
+        df.loc[s3, "dcf_ecllt_upside"] = df.loc[s3, "ecl_stage3_upside"]
+
+        df.loc[s3, "dcf_ecl12_downside"] = df.loc[s3, "ecl_stage3_downside"]
+        df.loc[s3, "dcf_ecllt_downside"] = df.loc[s3, "ecl_stage3_downside"]
+
+        # Optional: make hazards explicit (not used after override, but nice for debugging)
+        df.loc[s3, "dcf_hazard_base"] = 1.0
+        df.loc[s3, "dcf_hazard_upside"] = 1.0
+        df.loc[s3, "dcf_hazard_downside"] = 1.0
 
     # selected horizon rule per stage
     df["dcf_ecl_selected_base"] = np.where(stage == 1, df["dcf_ecl12_base"], df["dcf_ecllt_base"])
