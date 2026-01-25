@@ -88,7 +88,7 @@ with wf1:
             y=[pre, ov, post],
         )
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 with wf2:
     st.markdown("### Segment waterfall")
@@ -106,7 +106,7 @@ with wf2:
             y=[pre_s, ov_s, post_s],
         )
     )
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width="stretch")
 
 st.markdown(
     "Pre-overlay is the model output. "
@@ -128,7 +128,7 @@ with c1:
         .sort_index()
         .reset_index()
     )
-    st.dataframe(stage_tbl, use_container_width=True)
+    st.dataframe(stage_tbl, width="stretch")
 
 with c2:
     st.markdown("### ECL by Segment (post-overlay)")
@@ -138,7 +138,7 @@ with c2:
         .sort_values("ecl_post_overlay", ascending=False)
         .reset_index()
     )
-    st.dataframe(seg_tbl, use_container_width=True, height=360)
+    st.dataframe(seg_tbl, width="stretch", height=360)
 
 st.divider()
 
@@ -154,7 +154,7 @@ with c3:
         scen_view["unweighted_sum"] = scen_view["unweighted_sum"].map(lambda x: f"{x:,.2f}")
         scen_view["weighted_contribution"] = scen["weighted_contribution"].map(lambda x: f"{x:,.2f}")
         scen_view["weighted_share"] = scen["weighted_share"].map(lambda x: f"{x:.2%}")
-        st.dataframe(scen_view, use_container_width=True)
+        st.dataframe(scen_view, width="stretch")
 
 with c4:
     st.markdown("### Driver Sensitivities by Segment (post-overlay)")
@@ -164,7 +164,7 @@ with c4:
         drv_view = drv.copy()
         # keep the biggest segments only
         drv_view = drv_view.sort_values("ecl_reported", ascending=False).head(15)
-        st.dataframe(drv_view, use_container_width=True, height=360)
+        st.dataframe(drv_view, width="stretch", height=360)
 
 st.markdown("## Scenario QC (Governance)")
 
@@ -176,14 +176,14 @@ c1, c2 = st.columns(2)
 with c1:
     st.markdown("### Macro severity (z-scores)")
     if os.path.exists(sev_path):
-        st.dataframe(pd.read_csv(sev_path), use_container_width=True)
+        st.dataframe(pd.read_csv(sev_path), width="stretch")
     else:
         st.info("Run: python -m ecl_engine.scenario_qc")
 
 with c2:
     st.markdown("### Implied PIT PD summary (Stage 1+2)")
     if os.path.exists(pdq_path):
-        st.dataframe(pd.read_csv(pdq_path), use_container_width=True)
+        st.dataframe(pd.read_csv(pdq_path), width="stretch")
     else:
         st.info("Run: python -m ecl_engine.scenario_qc")
 
@@ -295,13 +295,13 @@ else:
         )
     )
     fig.update_layout(title=title, showlegend=False, waterfallgap=0.3, margin=dict(l=10, r=10, t=50, b=10))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     st.markdown("### Table")
-    st.dataframe(df_w, use_container_width=True)
+    st.dataframe(df_w, width="stretch")
     if df_s is not None:
         st.markdown("### Scenario table (Phase 5)")
-        st.dataframe(df_s, use_container_width=True)
+        st.dataframe(df_s, width="stretch")
 
 st.divider()
 
@@ -320,7 +320,7 @@ else:
         color="stage",
         title="Stage Counts Over Time (QC)",
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 st.divider()
 
@@ -354,7 +354,7 @@ else:
 
     with c1:
         st.markdown("### Matrix table")
-        st.dataframe(show.round(2), use_container_width=True)
+        st.dataframe(show.round(2), width="stretch")
 
     with c2:
         st.markdown("### Heatmap")
@@ -367,7 +367,7 @@ else:
             )
         )
         fig.update_layout(xaxis_title="Stage to", yaxis_title="Stage from")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
 st.markdown(
     "Rows = stage last month (t-1), columns = stage this month (t). "
@@ -433,7 +433,7 @@ else:
         y=["1→2 (SICR)", "2→1 (Cure)", "1→3 (Default)", "2→3 (Default)"],
         title="Stage Migration Trend",
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     st.caption("Percentages are conditional on the 'from stage' population each month.")
 
 st.divider()
@@ -444,14 +444,14 @@ if audit is None:
     st.info("Overlay audit not found. Run: python -m ecl_engine.overlay_audit")
 else:
     st.markdown("### Overlay register (rules + allocated impact)")
-    st.dataframe(audit, use_container_width=True)
+    st.dataframe(audit, width="stretch")
 
     oid = st.selectbox("Select overlay_id to view impacted accounts", audit["overlay_id"].tolist())
     top_path = f"data/curated/overlay_top_accounts_{oid}.parquet"
     if glob.glob(top_path):
         top = pd.read_parquet(top_path)
         st.markdown("### Top accounts impacted by overlay allocation")
-        st.dataframe(top, use_container_width=True, height=360)
+        st.dataframe(top, width="stretch", height=360)
     else:
         st.warning("Top accounts file not found for this overlay.")
 
@@ -461,7 +461,7 @@ st.markdown("## PD Model Validation (Phase 2)")
 
 if os.path.exists("reports/pd_validation_metrics.csv"):
     met = pd.read_csv("reports/pd_validation_metrics.csv")
-    st.dataframe(met, use_container_width=True)
+    st.dataframe(met, width="stretch")
 else:
     st.info("No PD validation metrics found. Run: python -m ecl_engine.models.pd_train")
 
@@ -490,7 +490,7 @@ if acct:
         c3.metric("Overlay", f"{float(row['overlay_amount']):,.2f}")
         c4.metric("Reported ECL", f"{float(row['ecl_post_overlay']):,.2f}")
 
-        st.dataframe(sub, use_container_width=True)
+        st.dataframe(sub, width="stretch")
 
         if int(row["stage"]) == 3 and "pv_recoveries" in sub.columns:
             st.markdown("#### Stage 3 Workout (recoveries-based)")
@@ -540,4 +540,4 @@ if acct:
                         st.code(str(exr.get("overlay_audit", "")))
 
                 st.markdown("#### Full explanation row")
-                st.dataframe(ex.T, use_container_width=True)
+                st.dataframe(ex.T, width="stretch")

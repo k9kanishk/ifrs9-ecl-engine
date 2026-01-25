@@ -28,7 +28,7 @@ def phase6_blocks(asof: str):
             st.metric("DCF vs Model Delta (total)", f"{(dcf['dcf_ecl_selected'] - dcf['ecl_selected']).sum():,.2f}")
         st.dataframe(
             dcf.groupby("segment")[["dcf_ecl_selected"]].sum().sort_values("dcf_ecl_selected", ascending=False).reset_index(),
-            use_container_width=True,
+            width="stretch",
         )
     else:
         st.info("Run: python -m ecl_engine.dcf_ecl")
@@ -38,13 +38,13 @@ def phase6_blocks(asof: str):
     pdm = f"reports/pd_monitoring_{asof}.csv"
     if os.path.exists(pdm):
         st.markdown("### PD monitoring by segment")
-        st.dataframe(pd.read_csv(pdm), use_container_width=True)
+        st.dataframe(pd.read_csv(pdm), width="stretch")
     else:
         st.info("Run: python -m ecl_engine.validation.pd_monitoring")
 
     bt = f"reports/ecl_backtest_{asof}.csv"
     if os.path.exists(bt):
         st.markdown("### ECL backtest proxy (segment x stage)")
-        st.dataframe(pd.read_csv(bt), use_container_width=True)
+        st.dataframe(pd.read_csv(bt), width="stretch")
     else:
         st.info("Run: python -m ecl_engine.validation.ecl_backtest")
