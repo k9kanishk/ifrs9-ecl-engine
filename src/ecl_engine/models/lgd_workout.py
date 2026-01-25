@@ -119,7 +119,8 @@ def stage3_workout_table_scenarios(
 
         pv = np.minimum(pv, ead)
         ratio = np.zeros_like(pv, dtype=np.float64)
-        np.divide(pv, ead, out=ratio, where=ead > 0)
+        mask = ead > 0
+        ratio[mask] = pv[mask] / ead[mask]
         lgd = 1.0 - ratio
         lgd = np.clip(lgd, 0.0, 1.0)
         ecl = ead * lgd
@@ -154,7 +155,8 @@ def stage3_workout_table_scenarios(
     out["pv_recoveries"] = w_base * pv_s["Base"] + w_up * pv_s["Upside"] + w_dn * pv_s["Downside"]
     pvw = out["pv_recoveries"].to_numpy(dtype=np.float64)
     ratio = np.zeros_like(pvw, dtype=np.float64)
-    np.divide(pvw, ead, out=ratio, where=ead > 0)
+    mask = ead > 0
+    ratio[mask] = pvw[mask] / ead[mask]
     out["workout_lgd"] = np.clip(1.0 - ratio, 0.0, 1.0)
     out["ecl_stage3_workout"] = w_base * ecl_s["Base"] + w_up * ecl_s["Upside"] + w_dn * ecl_s["Downside"]
 
