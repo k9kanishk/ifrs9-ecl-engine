@@ -29,6 +29,15 @@ if not available_asofs:
 selected_asof = st.sidebar.selectbox("Select ASOF", available_asofs, index=0)
 
 
+def _arrow_safe(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    for c in out.columns:
+        if out[c].dtype == "object":
+            if out[c].map(lambda x: isinstance(x, (pd.Timestamp,))).any():
+                out[c] = pd.to_datetime(out[c], errors="coerce")
+    return out
+
+
 @st.cache_data
 def load_asof_outputs(asof: str):
     ecl_path = f"data/curated/ecl_output_asof_{asof}.parquet"
@@ -106,7 +115,7 @@ with col1:
         ["account_id", "segment", "stage", "balance", "ecl_post_overlay"]
     ].copy()
     top_ecl["ecl_post_overlay"] = top_ecl["ecl_post_overlay"].apply(lambda x: f"{x:,.2f}")
-    st.dataframe(top_ecl, width="stretch", height=300)
+    st.dataframe(_arrow_safe(top_ecl), width="stretch", height=300)
 
 with col2:
     st.markdown("### Highest Overlay Impact")
@@ -114,7 +123,7 @@ with col2:
         ["account_id", "segment", "ecl_pre_overlay", "overlay_amount"]
     ].copy()
     top_ov["overlay_amount"] = top_ov["overlay_amount"].apply(lambda x: f"{x:,.2f}")
-    st.dataframe(top_ov, width="stretch", height=300)
+    st.dataframe(_arrow_safe(top_ov), width="stretch", height=300)
 
 with col3:
     if show_dcf and dcf is not None:
@@ -125,7 +134,7 @@ with col3:
             ["account_id", "segment", "ecl_post_overlay", "dcf_ecl_selected", "delta"]
         ].copy()
         top_dcf["delta"] = top_dcf["delta"].apply(lambda x: f"{x:,.2f}")
-        st.dataframe(top_dcf, width="stretch", height=300)
+        st.dataframe(_arrow_safe(top_dcf), width="stretch", height=300)
     else:
         st.info("Enable DCF comparison to see DCF-Model deltas")
 
@@ -189,7 +198,7 @@ with c1:
         .sort_index()
         .reset_index()
     )
-    st.dataframe(stage_tbl, width="stretch")
+    st.dataframe(_arrow_safe(stage_tbl), width="stretch")
 
 with c2:
     st.markdown("### ECL by Segment (post-overlay)")
@@ -199,7 +208,7 @@ with c2:
         .sort_values("ecl_post_overlay", ascending=False)
         .reset_index()
     )
-    st.dataframe(seg_tbl, width="stretch", height=360)
+    st.dataframe(_arrow_safe(seg_tbl), width="stretch", height=360)
 
 st.divider()
 
@@ -215,7 +224,7 @@ with c3:
         scen_view["unweighted_sum"] = scen_view["unweighted_sum"].map(lambda x: f"{x:,.2f}")
         scen_view["weighted_contribution"] = scen["weighted_contribution"].map(lambda x: f"{x:,.2f}")
         scen_view["weighted_share"] = scen["weighted_share"].map(lambda x: f"{x:.2%}")
-        st.dataframe(scen_view, width="stretch")
+        st.dataframe(_arrow_safe(scen_view), width="stretch")
 
 with c4:
     st.markdown("### Driver Sensitivities by Segment (post-overlay)")
@@ -225,7 +234,7 @@ with c4:
         drv_view = drv.copy()
         # keep the biggest segments only
         drv_view = drv_view.sort_values("ecl_reported", ascending=False).head(15)
-        st.dataframe(drv_view, width="stretch", height=360)
+        st.dataframe(_arrow_safe(drv_view), width="stretch", height=360)
 
 st.markdown("## Scenario QC (Governance)")
 
@@ -237,14 +246,14 @@ c1, c2 = st.columns(2)
 with c1:
     st.markdown("### Macro severity (z-scores)")
     if os.path.exists(sev_path):
-        st.dataframe(pd.read_csv(sev_path), width="stretch")
+        st.dataframe(_arrow_safe(pd.read_csv(sev_path)), width="stretch")
     else:
         st.info("Run: python -m ecl_engine.scenario_qc")
 
 with c2:
     st.markdown("### Implied PIT PD summary (Stage 1+2)")
     if os.path.exists(pdq_path):
-        st.dataframe(pd.read_csv(pdq_path), width="stretch")
+        st.dataframe(_arrow_safe(pd.read_csv(pdq_path)), width="stretch")
     else:
         st.info("Run: python -m ecl_engine.scenario_qc")
 
@@ -359,10 +368,10 @@ else:
     st.plotly_chart(fig, width="stretch")
 
     st.markdown("### Table")
-    st.dataframe(df_w, width="stretch")
+    st.dataframe(_arrow_safe(df_w), width="stretch")
     if df_s is not None:
         st.markdown("### Scenario table (Phase 5)")
-        st.dataframe(df_s, width="stretch")
+        st.dataframe(_arrow_safe(df_s), width="stretch")
 
 st.divider()
 
@@ -415,7 +424,7 @@ else:
 
     with c1:
         st.markdown("### Matrix table")
-        st.dataframe(show.round(2), width="stretch")
+        st.dataframe(_arrow_safe(show.round(2)), width="stretch")
 
     with c2:
         st.markdown("### Heatmap")
@@ -505,14 +514,14 @@ if audit is None:
     st.info("Overlay audit not found. Run: python -m ecl_engine.overlay_audit")
 else:
     st.markdown("### Overlay register (rules + allocated impact)")
-    st.dataframe(audit, width="stretch")
+    st.dataframe(_arrow_safe(audit), width="stretch")
 
     oid = st.selectbox("Select overlay_id to view impacted accounts", audit["overlay_id"].tolist())
     top_path = f"data/curated/overlay_top_accounts_{oid}.parquet"
     if glob.glob(top_path):
         top = pd.read_parquet(top_path)
         st.markdown("### Top accounts impacted by overlay allocation")
-        st.dataframe(top, width="stretch", height=360)
+        st.dataframe(_arrow_safe(top), width="stretch", height=360)
     else:
         st.warning("Top accounts file not found for this overlay.")
 
@@ -522,7 +531,7 @@ st.markdown("## PD Model Validation (Phase 2)")
 
 if os.path.exists("reports/pd_validation_metrics.csv"):
     met = pd.read_csv("reports/pd_validation_metrics.csv")
-    st.dataframe(met, width="stretch")
+    st.dataframe(_arrow_safe(met), width="stretch")
 else:
     st.info("No PD validation metrics found. Run: python -m ecl_engine.models.pd_train")
 
@@ -551,7 +560,7 @@ if acct:
         c3.metric("Overlay", f"{float(row['overlay_amount']):,.2f}")
         c4.metric("Reported ECL", f"{float(row['ecl_post_overlay']):,.2f}")
 
-        st.dataframe(sub, width="stretch")
+        st.dataframe(_arrow_safe(sub), width="stretch")
 
         if int(row["stage"]) == 3 and "pv_recoveries" in sub.columns:
             st.markdown("#### Stage 3 Workout (recoveries-based)")
@@ -611,4 +620,4 @@ if acct:
                         st.code(str(exr.get("overlay_audit", "")))
 
                 st.markdown("#### Full explanation row")
-                st.dataframe(ex.T, width="stretch")
+                st.dataframe(_arrow_safe(ex.T), width="stretch")

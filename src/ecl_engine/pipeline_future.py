@@ -17,7 +17,6 @@ def main() -> None:
 
     py = sys.executable
 
-    # DCF ECL (CRITICAL: pass ASOF)
     if args.asof:
         _run([py, "-m", "ecl_engine.dcf_ecl", "--asof", args.asof])
         _run([py, "-m", "ecl_engine.validation.pd_monitoring", "--asof", args.asof])
@@ -27,8 +26,8 @@ def main() -> None:
         _run([py, "-m", "ecl_engine.validation.pd_monitoring"])
         _run([py, "-m", "ecl_engine.validation.ecl_backtest"])
 
-    print("\n✅ Future/validation pipeline complete.")
-    print("All outputs ready for dashboard.")
+    print("\nFuture pipeline done.")
+    print("Next: streamlit run dashboards/app.py")
 
 
 if __name__ == "__main__":
