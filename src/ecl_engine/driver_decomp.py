@@ -170,4 +170,10 @@ def run_decomposition(
 
 
 if __name__ == "__main__":
-    run_decomposition()
+    import argparse
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--asof", default=None, help="ASOF date YYYY-MM-DD (optional)")
+    args = ap.parse_args()
+
+    run_decomposition(asof=args.asof)
