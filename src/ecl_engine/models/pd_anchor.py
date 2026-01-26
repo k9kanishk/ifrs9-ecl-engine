@@ -51,14 +51,31 @@ def main() -> None:
         default=None,
         help="Optional explicit target PD mean (0-1). If omitted, uses mean(ttc_pd_annual) per group.",
     )
+    ap.add_argument(
+        "--asof",
+        default=None,
+        help="ASOF date YYYY-MM-DD (optional). If omitted, uses latest pd_scores file.",
+    )
     args = ap.parse_args()
 
-    scores_path = _latest_scores_path()
-    asof = scores_path.stem.replace("pd_scores_asof_", "")
-    asof_ts = pd.Timestamp(asof)
+    # Determine ASOF and scores path
+    if args.asof:
+        asof = args.asof
+        asof_ts = pd.Timestamp(asof)
+        scores_path = Path(f"data/curated/pd_scores_asof_{asof}.parquet")
+        if not scores_path.exists():
+            raise FileNotFoundError(
+                f"Missing {scores_path}. Run: python -m ecl_engine.models.pd_score --asof {asof}"
+            )
+    else:
+        scores_path = _latest_scores_path()
+        asof = scores_path.stem.replace("pd_scores_asof_", "")
+        asof_ts = pd.Timestamp(asof)
 
     scores = pd.read_parquet(scores_path)[["account_id", "pd_12m_hat"]].copy()
-    accounts = pd.read_parquet("data/curated/accounts.parquet")[["account_id", "segment", "ttc_pd_annual"]].copy()
+    accounts = pd.read_parquet("data/curated/accounts.parquet")[
+        ["account_id", "segment", "ttc_pd_annual"]
+    ].copy()
 
     df = scores.merge(accounts, on="account_id", how="left")
     df["segment"] = df["segment"].astype(str).fillna("UNKNOWN")
