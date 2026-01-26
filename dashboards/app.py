@@ -516,7 +516,17 @@ if acct:
                     st.write(exr.get("stage_reason", "N/A"))
                     if "dpd" in ex.columns:
                         st.write(f"DPD: {exr.get('dpd', 'N/A')}")
-                    st.write(f"Months to maturity: {int(exr.get('months_to_maturity', 0))}")
+                    # Original problematic code:
+                    # st.write(f"Months to maturity: {int(exr.get('months_to_maturity', 0))}")
+
+                    # Fixed version:
+                    mtm = exr.get('months_to_maturity')
+                    if pd.isna(mtm) or mtm < 0:
+                        st.write("Months to maturity: **Matured** (past maturity date)")
+                    elif mtm == 0:
+                        st.write("Months to maturity: **< 1 month**")
+                    else:
+                        st.write(f"Months to maturity: **{int(mtm)} months**")
 
                     st.markdown("**EAD / LGD / Discounting**")
                     st.write(f"EAD rule: {exr.get('ead_rule','N/A')}")
