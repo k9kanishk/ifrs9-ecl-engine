@@ -21,6 +21,14 @@ def _discount_factors_monthly(eir_annual: np.ndarray, horizon: int) -> np.ndarra
     return 1.0 / np.power(1.0 + r_m[:, None], t)
 
 
+def _safe_divide_ratio(pv: np.ndarray, ead: np.ndarray) -> np.ndarray:
+    """Safe division handling zero and invalid values."""
+    ratio = np.zeros_like(pv, dtype=np.float64)
+    mask = (ead > 0) & np.isfinite(ead) & np.isfinite(pv)
+    ratio[mask] = pv[mask] / ead[mask]
+    return np.clip(ratio, 0.0, 1.0)
+
+
 def stage3_workout_table_scenarios(
     asof_dt: pd.Timestamp,
     accounts: pd.DataFrame,
@@ -118,9 +126,7 @@ def stage3_workout_table_scenarios(
             pv[i] = float(np.sum(rec_cf * DF[i, :]))
 
         pv = np.minimum(pv, ead)
-        ratio = np.zeros_like(pv, dtype=np.float64)
-        mask = ead > 0
-        ratio[mask] = pv[mask] / ead[mask]
+        ratio = _safe_divide_ratio(pv, ead)
         lgd = 1.0 - ratio
         lgd = np.clip(lgd, 0.0, 1.0)
         ecl = ead * lgd
@@ -154,9 +160,7 @@ def stage3_workout_table_scenarios(
 
     out["pv_recoveries"] = w_base * pv_s["Base"] + w_up * pv_s["Upside"] + w_dn * pv_s["Downside"]
     pvw = out["pv_recoveries"].to_numpy(dtype=np.float64)
-    ratio = np.zeros_like(pvw, dtype=np.float64)
-    mask = ead > 0
-    ratio[mask] = pvw[mask] / ead[mask]
+    ratio = _safe_divide_ratio(pvw, ead)
     out["workout_lgd"] = np.clip(1.0 - ratio, 0.0, 1.0)
     out["ecl_stage3_workout"] = w_base * ecl_s["Base"] + w_up * ecl_s["Upside"] + w_dn * ecl_s["Downside"]
 

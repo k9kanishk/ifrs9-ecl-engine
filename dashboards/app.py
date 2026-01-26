@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import glob
 import os
+from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
@@ -14,40 +15,65 @@ st.set_page_config(page_title="IFRS 9 ECL Dashboard", layout="wide")
 st.title("IFRS 9 ECL Engine — Dashboard")
 st.caption("Stage, ECL, Scenarios, Overlays — built from reproducible pipeline outputs.")
 
+# ASOF Selector
+st.sidebar.header("📅 ASOF Selection")
+available_asofs = sorted(
+    [p.stem.replace("ecl_output_asof_", "") for p in Path("data/curated").glob("ecl_output_asof_*.parquet")],
+    reverse=True,
+)
+
+if not available_asofs:
+    st.error("No ECL outputs found. Run: python -m ecl_engine.pipeline --asof 2024-12-31")
+    st.stop()
+
+selected_asof = st.sidebar.selectbox("Select ASOF", available_asofs, index=0)
+
 
 @st.cache_data
-def load_latest_outputs():
-    ecl_paths = sorted(glob.glob("data/curated/ecl_output_asof_*.parquet"))
-    if not ecl_paths:
-        raise FileNotFoundError("No ecl_output_asof_*.parquet found. Run: python src/ecl_engine/ecl.py")
-
-    latest_ecl_path = ecl_paths[-1]
-    asof = latest_ecl_path.split("_")[-1].replace(".parquet", "")
-
-    ecl = pd.read_parquet(latest_ecl_path)
+def load_asof_outputs(asof: str):
+    ecl_path = f"data/curated/ecl_output_asof_{asof}.parquet"
+    ecl = pd.read_parquet(ecl_path)
     ecl_ov = pd.read_parquet("data/curated/ecl_with_overlays.parquet")
 
+    ecl_ov["asof_date"] = pd.to_datetime(ecl_ov["asof_date"])
+    ecl_ov = ecl_ov[ecl_ov["asof_date"] == pd.Timestamp(asof)].copy()
+
     scen_path = f"data/curated/scenario_contribution_{asof}.csv"
+    scen = pd.read_csv(scen_path) if Path(scen_path).exists() else None
+
+    dcf_path = f"data/curated/ecl_dcf_asof_{asof}.parquet"
+    dcf = pd.read_parquet(dcf_path) if Path(dcf_path).exists() else None
+
+    return asof, ecl, ecl_ov, scen, dcf
+
+
+@st.cache_data
+def load_additional_outputs(asof: str):
     drv_path = f"data/curated/driver_decomposition_{asof}.csv"
     qc_path = "data/curated/staging_qc_summary.parquet"
 
-    scen = pd.read_csv(scen_path) if glob.glob(scen_path) else None
-    drv = pd.read_csv(drv_path) if glob.glob(drv_path) else None
-    qc = pd.read_parquet(qc_path) if glob.glob(qc_path) else None
+    drv = pd.read_csv(drv_path) if Path(drv_path).exists() else None
+    qc = pd.read_parquet(qc_path) if Path(qc_path).exists() else None
 
     mig_path = "data/curated/stage_migration.parquet"
-    mig = pd.read_parquet(mig_path) if glob.glob(mig_path) else None
+    mig = pd.read_parquet(mig_path) if Path(mig_path).exists() else None
 
     audit_path = "data/curated/overlay_audit.parquet"
-    audit = pd.read_parquet(audit_path) if glob.glob(audit_path) else None
+    audit = pd.read_parquet(audit_path) if Path(audit_path).exists() else None
 
     exp_path = f"data/curated/account_explain_asof_{asof}.parquet"
-    explain = pd.read_parquet(exp_path) if glob.glob(exp_path) else None
+    explain = pd.read_parquet(exp_path) if Path(exp_path).exists() else None
 
-    return asof, ecl, ecl_ov, scen, drv, qc, mig, audit, explain
+    return drv, qc, mig, audit, explain
 
 
-asof, ecl, ecl_ov, scen, drv, qc, mig, audit, explain = load_latest_outputs()
+asof, ecl, ecl_ov, scen, dcf = load_asof_outputs(selected_asof)
+drv, qc, mig, audit, explain = load_additional_outputs(asof)
+
+if dcf is not None:
+    show_dcf = st.sidebar.checkbox("Show DCF comparison", value=False)
+else:
+    show_dcf = False
 
 st.subheader(f"ASOF: {asof}")
 
@@ -67,6 +93,41 @@ col1.metric("Reported ECL (post-overlay)", f"{f['ecl_post_overlay'].sum():,.2f}"
 col2.metric("Overlay impact", f"{f['overlay_amount'].sum():,.2f}")
 col3.metric("Pre-overlay ECL", f"{f['ecl_pre_overlay'].sum():,.2f}")
 col4.metric("Accounts in view", f"{f.shape[0]:,}")
+
+# Top Movers Section
+st.divider()
+st.markdown("## 🔍 Top Movers")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.markdown("### Highest ECL Accounts")
+    top_ecl = ecl_ov.nlargest(10, "ecl_post_overlay")[
+        ["account_id", "segment", "stage", "balance", "ecl_post_overlay"]
+    ].copy()
+    top_ecl["ecl_post_overlay"] = top_ecl["ecl_post_overlay"].apply(lambda x: f"{x:,.2f}")
+    st.dataframe(top_ecl, width="stretch", height=300)
+
+with col2:
+    st.markdown("### Highest Overlay Impact")
+    top_ov = ecl_ov.nlargest(10, "overlay_amount")[
+        ["account_id", "segment", "ecl_pre_overlay", "overlay_amount"]
+    ].copy()
+    top_ov["overlay_amount"] = top_ov["overlay_amount"].apply(lambda x: f"{x:,.2f}")
+    st.dataframe(top_ov, width="stretch", height=300)
+
+with col3:
+    if show_dcf and dcf is not None:
+        st.markdown("### Biggest DCF-Model Deltas")
+        merged = dcf.merge(ecl_ov[["account_id", "ecl_post_overlay"]], on="account_id", how="left")
+        merged["delta"] = (merged["dcf_ecl_selected"] - merged["ecl_post_overlay"]).abs()
+        top_dcf = merged.nlargest(10, "delta")[
+            ["account_id", "segment", "ecl_post_overlay", "dcf_ecl_selected", "delta"]
+        ].copy()
+        top_dcf["delta"] = top_dcf["delta"].apply(lambda x: f"{x:,.2f}")
+        st.dataframe(top_dcf, width="stretch", height=300)
+    else:
+        st.info("Enable DCF comparison to see DCF-Model deltas")
 
 st.divider()
 

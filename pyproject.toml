@@ -1,0 +1,35 @@
+[tool.black]
+line-length = 120
+target-version = ['py312']
+include = '\\.pyi?$'
+exclude = '''
+/(
+    \\.git
+  | \\.venv
+  | \\.pytest_cache
+  | __pycache__
+  | data
+  | models
+  | reports
+)/
+'''
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]  # Line too long (handled by black)
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "data",
+    "models",
+    "reports",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
