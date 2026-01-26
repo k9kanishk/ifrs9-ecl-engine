@@ -12,7 +12,7 @@ import pandas as pd
 # -----------------------------
 def month_ends(start: str, months: int) -> pd.DatetimeIndex:
     # Month-end frequency; start should be a month-end date string like "2018-01-31"
-    idx = pd.date_range(start=start, periods=months, freq="M")
+    idx = pd.date_range(start=start, periods=months, freq="ME")
     return idx
 
 

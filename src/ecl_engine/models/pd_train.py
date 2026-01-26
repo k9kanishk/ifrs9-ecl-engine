@@ -243,7 +243,15 @@ def fit_pd_model(
 
     # Predict
     p_train = pipe.predict_proba(X_train)[:, 1]
-    p_test = pipe.predict_proba(X_test)[:, 1]
+    if X_test is None or len(X_test) == 0:
+        print(
+            "WARN: X_test is empty (likely due to short history / label horizon). "
+            "Skipping test metrics."
+        )
+        p_test = np.array([])
+        y_test = pd.Series(dtype=int)
+    else:
+        p_test = pipe.predict_proba(X_test)[:, 1]
 
     # --- Calibration-in-the-large (CITL): shift logits so mean predicted matches observed ---
     def logit(p):
@@ -300,40 +308,41 @@ def fit_pd_model(
     m.to_csv(metrics_path, index=False)
     print(f"Wrote: {metrics_path}")
 
-    # ROC plot (test)
-    if pd.Series(y_test).nunique() > 1:
-        fpr, tpr, _ = roc_curve(y_test, p_test)
-        plt.figure()
-        plt.plot(fpr, tpr)
-        plt.xlabel("False Positive Rate")
-        plt.ylabel("True Positive Rate")
-        plt.title("PD Model ROC (Test)")
-        plt.savefig("reports/pd_roc.png", bbox_inches="tight")
-        plt.close()
-        print("Wrote: reports/pd_roc.png")
+    if p_test.size > 0:
+        # ROC plot (test)
+        if pd.Series(y_test).nunique() > 1:
+            fpr, tpr, _ = roc_curve(y_test, p_test)
+            plt.figure()
+            plt.plot(fpr, tpr)
+            plt.xlabel("False Positive Rate")
+            plt.ylabel("True Positive Rate")
+            plt.title("PD Model ROC (Test)")
+            plt.savefig("reports/pd_roc.png", bbox_inches="tight")
+            plt.close()
+            print("Wrote: reports/pd_roc.png")
 
-    # Calibration plot (test)
-    if pd.Series(y_test).nunique() > 1:
-        frac_pos, mean_pred = calibration_curve(y_test, p_test, n_bins=10, strategy="quantile")
-        plt.figure()
-        plt.plot(mean_pred, frac_pos, marker="o")
-        plt.plot([0, 1], [0, 1], linestyle="--")
-        plt.xlabel("Mean predicted PD")
-        plt.ylabel("Observed default rate")
-        plt.title("PD Calibration (Test)")
-        plt.savefig("reports/pd_calibration.png", bbox_inches="tight")
-        plt.close()
-        print("Wrote: reports/pd_calibration.png")
+        # Calibration plot (test)
+        if pd.Series(y_test).nunique() > 1:
+            frac_pos, mean_pred = calibration_curve(y_test, p_test, n_bins=10, strategy="quantile")
+            plt.figure()
+            plt.plot(mean_pred, frac_pos, marker="o")
+            plt.plot([0, 1], [0, 1], linestyle="--")
+            plt.xlabel("Mean predicted PD")
+            plt.ylabel("Observed default rate")
+            plt.title("PD Calibration (Test)")
+            plt.savefig("reports/pd_calibration.png", bbox_inches="tight")
+            plt.close()
+            print("Wrote: reports/pd_calibration.png")
 
-    # Score distribution
-    plt.figure()
-    plt.hist(p_test, bins=50)
-    plt.title("PD Score Distribution (Test)")
-    plt.xlabel("Predicted 12M PD")
-    plt.ylabel("Count")
-    plt.savefig("reports/pd_score_hist.png", bbox_inches="tight")
-    plt.close()
-    print("Wrote: reports/pd_score_hist.png")
+        # Score distribution
+        plt.figure()
+        plt.hist(p_test, bins=50)
+        plt.title("PD Score Distribution (Test)")
+        plt.xlabel("Predicted 12M PD")
+        plt.ylabel("Count")
+        plt.savefig("reports/pd_score_hist.png", bbox_inches="tight")
+        plt.close()
+        print("Wrote: reports/pd_score_hist.png")
 
     # Save model + schema
     Path(model_path).parent.mkdir(parents=True, exist_ok=True)
