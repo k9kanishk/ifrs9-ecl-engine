@@ -1,0 +1,44 @@
+# .gitignore
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Data (keep out of git!)
+/data/
+!/data/curated/overlays.csv
+!/data/curated/n
+
+# Models
+/models/
+!/models/.gitkeep
+
+# Reports
+/reports/
+!/reports/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Pytest
+.pytest_cache/
+
+# Environments
+.venv/
+venv/
+ENV/

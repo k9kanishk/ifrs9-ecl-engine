@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest ruff black
+
+    - name: Lint with ruff
+      run: |
+        ruff check src/ tests/
+      continue-on-error: true  # Don't fail build on lint errors initially
+
+    - name: Format check with black
+      run: |
+        black --check src/ tests/
+      continue-on-error: true  # Don't fail build on format errors initially
+
+    - name: Generate synthetic data
+      run: |
+        python -m ecl_engine.data.make_synthetic --n_accounts 1000 --months 24
+
+    - name: Run core pipeline
+      run: |
+        python -m ecl_engine.staging
+        python -m ecl_engine.models.pd_train
+        python -m ecl_engine.models.pd_score
+        python -m ecl_engine.models.pd_anchor --level segment
+        python -m ecl_engine.ecl --asof 2024-12-31
+        python -m ecl_engine.run_ecl_with_overlays --asof 2024-12-31
+
+    - name: Run tests
+      run: |
+        pytest -v tests/
