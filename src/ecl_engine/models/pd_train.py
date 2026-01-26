@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from pathlib import Path
 
 import joblib
@@ -243,13 +244,13 @@ def fit_pd_model(
 
     # Predict
     p_train = pipe.predict_proba(X_train)[:, 1]
+    # --- SAFE predict on test (synthetic datasets can produce empty test folds) ---
     if X_test is None or len(X_test) == 0:
-        print(
-            "WARN: X_test is empty (likely due to short history / label horizon). "
-            "Skipping test metrics."
+        warnings.warn(
+            "PD train: X_test is empty after split; skipping test-set metrics. "
+            "For synthetic demos, increase --months or adjust split logic."
         )
-        p_test = np.array([])
-        y_test = pd.Series(dtype=int)
+        p_test = np.array([], dtype=np.float64)
     else:
         p_test = pipe.predict_proba(X_test)[:, 1]
 
@@ -272,7 +273,10 @@ def fit_pd_model(
 
     # Metrics
     auc_train = roc_auc_score(y_train, p_train) if y_train.nunique() > 1 else np.nan
-    auc_test = roc_auc_score(y_test, p_test) if y_test.nunique() > 1 else np.nan
+    if len(p_test) == 0 or y_test is None or len(y_test) == 0:
+        auc_test = np.nan
+    else:
+        auc_test = roc_auc_score(y_test, p_test) if y_test.nunique() > 1 else np.nan
 
     def ks(y, p):
         if pd.Series(y).nunique() <= 1:
@@ -281,7 +285,10 @@ def fit_pd_model(
         return float(np.max(np.abs(tpr - fpr)))
 
     ks_train = ks(y_train, p_train)
-    ks_test = ks(y_test, p_test)
+    if len(p_test) == 0 or y_test is None or len(y_test) == 0:
+        ks_test = np.nan
+    else:
+        ks_test = ks(y_test, p_test)
 
     # Save metrics
     Path(metrics_path).parent.mkdir(parents=True, exist_ok=True)
