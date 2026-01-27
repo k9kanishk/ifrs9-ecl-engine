@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 
 REQUIRED_Z_COLS = ["unemployment_z", "gdp_yoy_z", "policy_rate_z"]

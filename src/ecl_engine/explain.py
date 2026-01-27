@@ -162,7 +162,7 @@ def main() -> None:
     Path("data/curated").mkdir(parents=True, exist_ok=True)
     out_path = Path(f"data/curated/account_explain_asof_{asof_dt.date().isoformat()}.parquet")
     out.to_parquet(out_path, index=False)
-    print(f"Read: data/curated/ecl_with_overlays.parquet")
+    print("Read: data/curated/ecl_with_overlays.parquet")
     print(f"Wrote: {out_path} ({out.shape[0]:,} rows)")
 
 

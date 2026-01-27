@@ -1,0 +1,13 @@
+{
+  "cat_cols": [
+    "segment",
+    "dpd_bucket"
+  ],
+  "num_cols": [
+    "log_balance",
+    "dpd",
+    "utilization",
+    "ttc_pd_annual"
+  ],
+  "citl_delta": 0.0001554076764245238
+}

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+
 import numpy as np
 import pandas as pd
+
 from ecl_engine.models.lgd_workout import stage3_workout_table_scenarios
 from ecl_engine.utils.io import load_yml
 from ecl_engine.utils.macro import prepare_macro_for_ecl

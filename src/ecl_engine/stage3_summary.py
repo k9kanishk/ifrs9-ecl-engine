@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+
 import pandas as pd
-import numpy as np
 
 
 def main(asof: str = "2024-12-31") -> None:

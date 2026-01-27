@@ -10,16 +10,16 @@ dist/
 build/
 
 # Data (keep out of git!)
-/data/
+#/data/
 !/data/curated/overlays.csv
 !/data/curated/n
 
 # Models
-/models/
+#/models/
 !/models/.gitkeep
 
 # Reports
-/reports/
+#/reports/
 !/reports/.gitkeep
 
 # IDE
