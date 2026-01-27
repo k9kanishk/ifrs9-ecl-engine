@@ -1,17 +1,25 @@
 """
 IFRS 9 ECL Engine - Streamlit Cloud Entry Point
 
-This file handles two scenarios:
-1. If data exists (committed to repo): Load dashboard directly
-2. If data missing: Show setup wizard to generate
-
-For fastest Streamlit Cloud deployment, commit your data/ folder.
+Handles:
+1. Python path setup (critical for Streamlit Cloud)
+2. Data check and generation
+3. Dashboard loading
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
+
+# ============================================================
+# CRITICAL: Add src/ to Python path BEFORE any imports
+# ============================================================
+ROOT_DIR = Path(__file__).parent.absolute()
+SRC_DIR = ROOT_DIR / "src"
+if SRC_DIR.exists() and str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
 import streamlit as st
 
@@ -28,7 +36,7 @@ st.set_page_config(
 # ============================================================
 # DATA CHECK
 # ============================================================
-DATA_DIR = Path("data/curated")
+DATA_DIR = ROOT_DIR / "data" / "curated"
 REQUIRED_FILES = [
     "ecl_output_asof_2024-12-31.parquet",
     "ecl_with_overlays.parquet",
@@ -42,61 +50,75 @@ def data_exists() -> bool:
     return all((DATA_DIR / f).exists() for f in REQUIRED_FILES)
 
 
-def run_pipeline_step(cmd: list[str], description: str) -> bool:
+def run_pipeline_step(cmd: list[str], description: str) -> tuple[bool, str]:
     """Run a pipeline step with error handling."""
     try:
+        # Set PYTHONPATH for subprocess
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(SRC_DIR) + ":" + env.get("PYTHONPATH", "")
+        
         result = subprocess.run(
             cmd, 
             check=True, 
             capture_output=True, 
             text=True,
-            timeout=120
+            timeout=180,  # 3 minute timeout per step
+            cwd=str(ROOT_DIR),
+            env=env,
         )
-        return True
+        return True, result.stdout
     except subprocess.CalledProcessError as e:
-        st.error(f"❌ {description} failed:\n```\n{e.stderr[-500:]}\n```")
-        return False
+        error_msg = e.stderr if e.stderr else str(e)
+        return False, error_msg[-1000:]
     except subprocess.TimeoutExpired:
-        st.error(f"❌ {description} timed out")
-        return False
+        return False, "Timeout after 180 seconds"
+    except Exception as e:
+        return False, str(e)
 
 
 def generate_data():
     """Generate all required data."""
+    py = sys.executable
+    
     steps = [
         ("📊 Generating synthetic accounts...", 
-         [sys.executable, "-m", "ecl_engine.data.make_synthetic", "--n_accounts", "1000", "--months", "84"]),
+         [py, "-m", "ecl_engine.data.make_synthetic", "--n_accounts", "1000", "--months", "84"]),
         ("🏗️ Running staging...", 
-         [sys.executable, "-m", "ecl_engine.staging"]),
+         [py, "-m", "ecl_engine.staging"]),
         ("🧠 Training PD model...", 
-         [sys.executable, "-m", "ecl_engine.models.pd_train"]),
+         [py, "-m", "ecl_engine.models.pd_train"]),
         ("📈 Scoring PD...", 
-         [sys.executable, "-m", "ecl_engine.models.pd_score"]),
+         [py, "-m", "ecl_engine.models.pd_score"]),
         ("⚓ Calibrating PD...", 
-         [sys.executable, "-m", "ecl_engine.models.pd_anchor", "--level", "segment"]),
+         [py, "-m", "ecl_engine.models.pd_anchor", "--level", "segment"]),
         ("💰 Calculating ECL...", 
-         [sys.executable, "-m", "ecl_engine.ecl", "--asof", "2024-12-31"]),
+         [py, "-m", "ecl_engine.ecl", "--asof", "2024-12-31"]),
         ("🎯 Applying overlays...", 
-         [sys.executable, "-m", "ecl_engine.run_ecl_with_overlays", "--asof", "2024-12-31"]),
+         [py, "-m", "ecl_engine.run_ecl_with_overlays", "--asof", "2024-12-31"]),
         ("🔍 Driver decomposition...", 
-         [sys.executable, "-m", "ecl_engine.driver_decomp", "--asof", "2024-12-31"]),
+         [py, "-m", "ecl_engine.driver_decomp", "--asof", "2024-12-31"]),
         ("📝 Generating explanations...", 
-         [sys.executable, "-m", "ecl_engine.explain", "--asof", "2024-12-31", "--n", "0"]),
+         [py, "-m", "ecl_engine.explain", "--asof", "2024-12-31", "--n", "0"]),
         ("🔄 Stage migration...", 
-         [sys.executable, "-m", "ecl_engine.stage_migration"]),
+         [py, "-m", "ecl_engine.stage_migration"]),
         ("🔐 Overlay audit...", 
-         [sys.executable, "-m", "ecl_engine.overlay_audit"]),
+         [py, "-m", "ecl_engine.overlay_audit"]),
         ("💵 DCF ECL...", 
-         [sys.executable, "-m", "ecl_engine.dcf_ecl", "--asof", "2024-12-31"]),
+         [py, "-m", "ecl_engine.dcf_ecl", "--asof", "2024-12-31"]),
     ]
     
     progress = st.progress(0)
     status = st.empty()
+    error_container = st.empty()
     
     for i, (desc, cmd) in enumerate(steps):
         status.markdown(f"**{desc}**")
-        if not run_pipeline_step(cmd, desc):
+        success, output = run_pipeline_step(cmd, desc)
+        
+        if not success:
+            error_container.error(f"❌ {desc} failed:\n```\n{output}\n```")
             return False
+            
         progress.progress((i + 1) / len(steps))
     
     status.markdown("**✅ All steps complete!**")
@@ -116,15 +138,14 @@ def show_setup_wizard():
     - 84 months of performance history
     - Full ECL calculations with 3 scenarios
     
-    **⏱️ Estimated time: ~45 seconds**
+    **⏱️ Estimated time: ~60 seconds**
     """)
     
     col1, col2 = st.columns([1, 2])
     
     with col1:
         if st.button("🎬 Generate Data & Launch", type="primary", use_container_width=True):
-            with st.spinner("Running ECL pipeline..."):
-                success = generate_data()
+            success = generate_data()
             
             if success:
                 st.success("✅ Setup complete!")
@@ -141,14 +162,26 @@ def show_setup_wizard():
         - Management overlays
         - Governance reports
         """)
+    
+    # Debug info (helpful for troubleshooting)
+    with st.expander("🔧 Debug Info"):
+        st.code(f"""
+Python: {sys.executable}
+Version: {sys.version}
+Working Dir: {ROOT_DIR}
+Src Dir: {SRC_DIR}
+Src Exists: {SRC_DIR.exists()}
+Data Dir: {DATA_DIR}
+sys.path[0:3]: {sys.path[0:3]}
+        """)
 
 
 def run_dashboard():
     """Run the main dashboard."""
-    app_path = Path("dashboards/app.py")
+    app_path = ROOT_DIR / "dashboards" / "app.py"
     
     if not app_path.exists():
-        st.error("❌ Dashboard file not found: dashboards/app.py")
+        st.error(f"❌ Dashboard file not found: {app_path}")
         return
     
     # Read the dashboard code
@@ -176,7 +209,10 @@ def run_dashboard():
         
         filtered_lines.append(line)
     
-    exec('\n'.join(filtered_lines), globals())
+    # Execute with proper globals
+    exec_globals = globals().copy()
+    exec_globals['__file__'] = str(app_path)
+    exec('\n'.join(filtered_lines), exec_globals)
 
 
 # ============================================================
